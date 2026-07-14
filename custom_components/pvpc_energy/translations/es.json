@@ -13,7 +13,8 @@
         "title": "UFD",
         "description": "Indica el CUPS y el número de facturas para la tarjeta Markdown",
         "data": {
-          "bills_number": "Número de facturas"
+          "bills_number": "Número de facturas",
+          "has_self_consumption": "Tengo instalación de autoconsumo solar"
         }
       }
     }

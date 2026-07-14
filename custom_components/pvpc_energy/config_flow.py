@@ -15,7 +15,8 @@ AUTH_SCHEMA = {
 }
 CUPS_SCHEMA = {
     vol.Required('cups'): cv.string,
-    vol.Required('bills_number', default='5'): cv.positive_int
+    vol.Required('bills_number', default='5'): cv.positive_int,
+    vol.Required('has_self_consumption', default=False): cv.boolean
 }
 
 class PvpcEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -46,6 +47,7 @@ class PvpcEnergyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self.data['zip_code'] = supply_point['zip_code']
             self.data['contract_start_date'] = supply_point['contract_start_date']
             self.data['bills_number'] = user_input['bills_number']
+            self.data['has_self_consumption'] = user_input['has_self_consumption']
             del self.data['cups_list']
 
             return self.async_create_entry(title=self.data['cups'], data=self.data)

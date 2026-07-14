@@ -13,7 +13,8 @@
         "title": "UFD",
         "description": "Insira o CUPS e o número de contas a serem exibidas no Markdown Card",
         "data": {
-          "bills_number": "Número de Contas"
+          "bills_number": "Número de Contas",
+          "has_self_consumption": "Tenho uma instalação de autoconsumo solar"
         }
       }
     }

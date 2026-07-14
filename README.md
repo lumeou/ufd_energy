@@ -17,6 +17,8 @@ Después de reiniciar y añadir la integración, deberás indicar las credencial
 Los datos de energía y coste (energy_data.csv) y los de las facturas (billing_periods.csv) se almacenan en el directorio "user_files". Descárgalos antes de desinstalar la integración si la vas a reinstalar más adelante.
 En el caso de tener datos de instalaciones previas, crea el directorio y añade los ficheros en él antes de añadir la integración
 
+Si tienes una instalación solar de autoconsumo, marca la opción "Tengo instalación de autoconsumo solar" al configurar el CUPS. Esto descargará además el excedente horario vertido a la red, guardado en `selfconsumption_data.csv`.
+
 ## Salida
 Después de añadir y configuración la integración, se descargará automáticamente los datos desde:
 * https://www.ufd.es: Consumos horarios de electricidad y periodos de facturación

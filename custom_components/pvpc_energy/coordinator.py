@@ -1,4 +1,4 @@
-from .const import DOMAIN, CURRENT_BILL_STATE, CONSUMPTION_STATISTIC_ID, CONSUMPTION_STATISTIC_NAME, COST_STATISTIC_ID, COST_STATISTIC_NAME, USER_FILES_PATH, ENERGY_FILE, BILLING_PERIODS_FILE
+from .const import DOMAIN, CURRENT_BILL_STATE, CONSUMPTION_STATISTIC_ID, CONSUMPTION_STATISTIC_NAME, COST_STATISTIC_ID, COST_STATISTIC_NAME, EXPORT_STATISTIC_ID, EXPORT_STATISTIC_NAME, USER_FILES_PATH, ENERGY_FILE, BILLING_PERIODS_FILE, SELFCONSUMPTION_FILE
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import (StatisticData, StatisticMeanType, StatisticMetaData,)
 from homeassistant.components.recorder.statistics import (async_add_external_statistics, get_last_statistics, statistics_during_period,)
@@ -23,6 +23,7 @@ class PvpcCoordinator:
     zip_code = None
     contract_start_date = None
     bills_number = None
+    has_self_consumption = False
 
     consumption_metadata = StatisticMetaData(
         name=CONSUMPTION_STATISTIC_NAME,
@@ -42,6 +43,15 @@ class PvpcCoordinator:
         statistic_id=COST_STATISTIC_ID,
         unit_of_measurement=CURRENCY_EURO,
     )
+    export_metadata = StatisticMetaData(
+        name=EXPORT_STATISTIC_NAME,
+        mean_type=StatisticMeanType.NONE,
+        unit_class=EnergyConverter.UNIT_CLASS,
+        has_sum=True,
+        source=DOMAIN,
+        statistic_id=EXPORT_STATISTIC_ID,
+        unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR
+    )
 
 
     def set_config(config):
@@ -53,6 +63,7 @@ class PvpcCoordinator:
         if 'contract_start_date' in config:
             PvpcCoordinator.contract_start_date = datetime.datetime.strptime(config['contract_start_date'], '%d/%m/%Y').date()
         PvpcCoordinator.bills_number = config['bills_number']
+        PvpcCoordinator.has_self_consumption = config.get('has_self_consumption', False)
 
         UFD.User = config['ufd_login']
         UFD.Password = config['ufd_password']
@@ -144,7 +155,101 @@ class PvpcCoordinator:
         elif not hass.states.get(CURRENT_BILL_STATE) and len(consumptions) > 0:
             await PvpcCoordinator.calculate_bills(hass, billing_periods, consumptions, prices, force_update)
 
+        if PvpcCoordinator.has_self_consumption:
+            try:
+                await PvpcCoordinator.import_selfconsumption_data(hass, start_date, end_date, force_update)
+            except Exception:
+                _LOGGER.exception("Error importando datos de autoconsumo")
+
         _LOGGER.debug(f"END - import_energy_data")
+
+    async def import_selfconsumption_data(hass, start_date, end_date, force_update=False):
+        _LOGGER.debug(f"START - import_selfconsumption_data(start_date={start_date.isoformat()}, end_date={end_date.isoformat()}, force_update={force_update})")
+
+        selfconsumptions = await PvpcCoordinator.load_selfconsumption_data(hass, SELFCONSUMPTION_FILE)
+        selfconsumptions_len = len(selfconsumptions)
+
+        last_selfconsumption_date = None
+        if selfconsumptions_len > 0:
+            last_selfconsumption_date = datetime.datetime.fromtimestamp(max(selfconsumptions.keys())).date()
+
+        if force_update or last_selfconsumption_date is None:
+            await PvpcCoordinator.get_data(UFD.selfConsumptions, start_date, end_date, selfconsumptions, 14, force_update)
+        elif end_date > last_selfconsumption_date:
+            await PvpcCoordinator.get_data(UFD.selfConsumptions, last_selfconsumption_date + datetime.timedelta(days=1), end_date, selfconsumptions, 14)
+
+        if force_update or len(selfconsumptions) > selfconsumptions_len:
+            await PvpcCoordinator.save_selfconsumption_data(hass, SELFCONSUMPTION_FILE, selfconsumptions)
+
+            if len(selfconsumptions) > 0:
+                last_stat = await get_instance(hass).async_add_executor_job(get_last_statistics, hass, 1, EXPORT_STATISTIC_ID, True, set())
+                first_selfconsumption_date = datetime.datetime.fromtimestamp(min(selfconsumptions.keys())).date()
+                if force_update or not last_stat \
+                    or first_selfconsumption_date != datetime.datetime.fromtimestamp(min(selfconsumptions.keys())).date():
+                    export_statistics = PvpcCoordinator.create_export_statistics(0, selfconsumptions, 0)
+                else:
+                    start = datetime.datetime.fromtimestamp(last_stat[EXPORT_STATISTIC_ID][0]['start'], datetime.UTC)
+                    stats = await get_instance(hass).async_add_executor_job(statistics_during_period, hass, start, None, {EXPORT_STATISTIC_ID}, 'hour', None, {'sum'})
+                    total_export = stats[EXPORT_STATISTIC_ID][0]["sum"]
+                    last_statistic_timestamp = stats[EXPORT_STATISTIC_ID][0]["start"]
+                    export_statistics = PvpcCoordinator.create_export_statistics(last_statistic_timestamp, selfconsumptions, total_export)
+
+                _LOGGER.info(f"len(export_statistics)={len(export_statistics)}")
+                get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, PvpcCoordinator.export_metadata, export_statistics)
+
+        _LOGGER.debug(f"END - import_selfconsumption_data")
+
+    async def load_selfconsumption_data(hass, file_path):
+        _LOGGER.debug(f"START - load_selfconsumption_data(file_path={file_path})")
+        selfconsumptions = {}
+        if exists(file_path):
+            with await hass.async_add_executor_job(open, file_path, 'r') as file:
+                file.readline()  # cabecera
+                for line in file:
+                    date, timestamp, grid, self_consumed, export = line[0:-1].split(',')
+                    selfconsumptions[int(timestamp)] = {
+                        'grid': float(grid) if grid != '' else 0.0,
+                        'self_consumed': float(self_consumed) if self_consumed != '' else 0.0,
+                        'export': float(export) if export != '' else 0.0,
+                    }
+        _LOGGER.debug(f"END - load_selfconsumption_data: len(selfconsumptions): {len(selfconsumptions)}")
+        return selfconsumptions
+
+    async def save_selfconsumption_data(hass, file_path, selfconsumptions):
+        _LOGGER.debug(f"START - save_selfconsumption_data(file_path={file_path}, len(selfconsumptions)={len(selfconsumptions)})")
+        timestamps = list(selfconsumptions.keys())
+        timestamps.sort()
+        with await hass.async_add_executor_job(open, file_path, 'w') as file:
+            file.write("date,timestamp,grid,self_consumed,export\n")
+            for timestamp in timestamps:
+                date = datetime.datetime.fromtimestamp(timestamp).strftime('%d/%m/%Y %H')
+                value = selfconsumptions[timestamp]
+                file.write(f"{date},{timestamp},{value['grid']},{value['self_consumed']},{value['export']}\n")
+        _LOGGER.debug(f"END - save_selfconsumption_data")
+
+    def create_export_statistics(last_statistic_timestamp, selfconsumptions, total_export):
+        _LOGGER.debug(f"START - create_export_statistics(last_statistic_timestamp={last_statistic_timestamp}, len(selfconsumptions)={len(selfconsumptions)}, total_export={total_export})")
+        export_statistics = []
+        timestamp = max(min(selfconsumptions.keys()), last_statistic_timestamp + 3600)
+        last_timestamp = max(selfconsumptions.keys())
+        day_export = 0
+        while timestamp <= last_timestamp:
+            export = 0
+            if timestamp in selfconsumptions:
+                export = selfconsumptions[timestamp]['export']
+            total_export += export
+            day_export += export
+            if datetime.datetime.fromtimestamp(timestamp).hour == 0:
+                day_export = export
+            start = datetime.datetime.fromtimestamp(timestamp, datetime.UTC)
+            export_statistics.append(
+                StatisticData(
+                    start=start, state=day_export, sum=total_export
+                )
+            )
+            timestamp += 3600
+        _LOGGER.debug(f"END - create_export_statistics: len(export_statistics)={len(export_statistics)}")
+        return export_statistics
 
     async def get_data(getter, start_date, end_date, data, days, force_update=False):
         _LOGGER.debug(f"START - get_data(getter={getter}, start_date={start_date.isoformat()}, end_date={end_date.isoformat()}, len(data)={len(data)}, days={days}, force_update={force_update})")    

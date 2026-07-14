@@ -13,7 +13,8 @@
         "title": "UFD",
         "description": "Enter the CUPS and the number of bills to show in Markdown Card",
         "data": {
-          "bills_number": "Number of bills"
+          "bills_number": "Number of bills",
+          "has_self_consumption": "I have a solar self-consumption installation"
         }
       }
     }
