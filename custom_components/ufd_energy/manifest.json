@@ -1,12 +1,12 @@
 {
   "domain": "ufd_energy",
   "name": "UFD Distribución Electricidad",
-  "codeowners": ["@yinyang17"],
+  "codeowners": ["@yinyang17","@lumeou"],
   "config_flow": true,
   "dependencies": ["recorder"],
-  "documentation":"https://github.com/yinyang17/pvpc_energy",
+  "documentation":"https://github.com/lumeou/ufd_energy",
   "iot_class": "cloud_polling",
-  "issue_tracker":"https://github.com/yinyang17/pvpc_energy/issues",
+  "issue_tracker":"https://github.com/lumeou/ufd_energy/issues",
   "requirements": [],
   "single_config_entry": true,
   "version": "0.5.0"
