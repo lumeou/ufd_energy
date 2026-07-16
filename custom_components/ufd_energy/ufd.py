@@ -80,6 +80,21 @@ class UFD:
             await UFD._session.close()
         UFD._session = None
 
+    def _webAppHeaders():
+        return {
+            "user-agent": UFD.getUserAgent(),
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "accept-language": "es-ES,es;q=0.9",
+            "referer": f"{UFD._WEB_APP_URL}/",
+            "sec-ch-ua": '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "same-origin",
+            "upgrade-insecure-requests": "1",
+        }
+
     async def _fetchCognitoCredentials(session):
         """Obtiene client_id y client_secret del JS de areaprivada.ufd.es."""
         if UFD._cognito_client_id and UFD._cognito_client_secret:
@@ -91,28 +106,42 @@ class UFD:
             # 1. Cargar la página principal para encontrar el JS
             async with session.get(
                 f"{UFD._WEB_APP_URL}/",
-                headers={"user-agent": UFD.getUserAgent()},
+                headers=UFD._webAppHeaders(),
                 ssl=False,
                 timeout=timeout,
             ) as resp:
+                html = await resp.text()
                 if resp.status != 200:
                     _LOGGER.warning(
                         "No se pudo cargar areaprivada.ufd.es (status %s)", resp.status
                     )
                     return None, None
-                html = await resp.text()
+                if UFD.isCaptchaResponse(resp, html):
+                    _LOGGER.warning(
+                        "areaprivada.ufd.es ha devuelto una pagina de bloqueo/CAPTCHA "
+                        "al pedir la pagina principal (no el JS esperado)."
+                    )
+                    return None, None
 
             # 2. Extraer la URL del JS principal
-            js_match = re.search(r'src="(/static/js/main\.[0-9a-f]+\.chunk\.js)"', html)
+            js_match = re.search(r'src="(/static/js/main\.[0-9a-f]+\.(?:chunk\.)?js)"', html)
             if not js_match:
-                _LOGGER.warning("No se encontró el archivo JS principal en areaprivada.ufd.es")
+                _LOGGER.warning(
+                    "No se encontró el archivo JS principal en areaprivada.ufd.es. "
+                    "Primeros 500 caracteres de la respuesta para diagnóstico: %s",
+                    html[:500],
+                )
                 return None, None
             js_url = f"{UFD._WEB_APP_URL}{js_match.group(1)}"
 
             # 3. Descargar el JS y extraer client_id y client_secret
+            js_headers = UFD._webAppHeaders()
+            js_headers["accept"] = "*/*"
+            js_headers["sec-fetch-dest"] = "script"
+            js_headers["sec-fetch-mode"] = "no-cors"
             async with session.get(
                 js_url,
-                headers={"user-agent": UFD.getUserAgent()},
+                headers=js_headers,
                 ssl=False,
                 timeout=timeout,
             ) as resp:
