@@ -591,15 +591,26 @@ class UfdEnergyCoordinator:
                         note = '' if market_cost_covered_from <= current_billing_period['start_date'] \
                             else f" _(datos desde {market_cost_covered_from.strftime('%d/%m')}, no cubre todo el periodo)_"
                         bills_description += f"Estimación mercado libre {current_billing_period['start_date'].strftime('%d/%m')} - {estimation_end_date.strftime('%d/%m')} ({estimation_days} días): **{market_estimate} €**{note}\n\n"
-                    
-            bills_description += '| Fecha | Días | Importe | kWh | kWh/día | cent/kWh | €/día |\n'
-            bills_description += '| :---: | :---: | :---: | :---: | :---: | :---: | :---: |'
+                        
+            # Cabecera de la tabla
+            bills_description += '| Fecha | Días | kWh | kWh/día |'
+            bills_description += ' Tarifa PVPC | | |'
+            bills_description += ' Tarifa mercado libre | | |\n'
+            bills_description += '| :---: | :---: | :---: | :---: |'
+            bills_description += ' :---: | :---: | :---: |'
+            bills_description += ' :---: | :---: | :---: |\n'
+            bills_description += '| | | | |'
+            bills_description += ' Importe | cent/kWh | €/día |'
+            bills_description += ' Importe | cent/kWh | €/día |'
+            
             for billing_period in reversed(billing_periods[-UfdEnergyCoordinator.bills_number:]):
                 if 'total_cost' in billing_period and billing_period['total_cost'] != '-':
                     date = billing_period['end_date'].strftime('%d/%m')
                     days = (billing_period['end_date'] - billing_period['start_date']).days + 1
                     consumption = round(billing_period['total_consumption'], 0)
                     day_consumption = round(billing_period['total_consumption'] / days, 1)
+                    
+                    # Variables PVPC
                     cost = ''
                     cost_kwh = ''
                     day_cost = ''
@@ -608,10 +619,37 @@ class UfdEnergyCoordinator:
                         if billing_period['total_consumption'] != 0:
                             cost_kwh = round(billing_period['energy_cost'] / billing_period['total_consumption'] * 100, 1)
                         day_cost = round(billing_period['total_cost'] / days, 2)
+                    
+                    # Variables mercado libre
+                    market_cost = ''
+                    market_cost_kwh = ''
+                    day_market_cost = ''
+                    market_cost, market_cost_covered_from = await UfdEnergyCoordinator.get_market_cost_for_period(
+                        hass, billing_period['start_date'], billing_period['end_date']
+                    )
+                    if market_cost is not None:
+                        if market_cost_covered_from <= billing_period['start_date']:
+                            # Datos completos del período
+                            market_cost = round(market_cost, 2)
+                            if billing_period['total_consumption'] != 0:
+                                market_cost_kwh = round(market_cost / billing_period['total_consumption'] * 100, 1)
+                            day_market_cost = round(market_cost / days, 2)
+                        else:
+                            # Datos parciales: mostramos con asterisco o nota
+                            market_cost = round(market_cost, 2)
+                            if billing_period['total_consumption'] != 0:
+                                market_cost_kwh = round(market_cost / billing_period['total_consumption'] * 100, 1)
+                            day_market_cost = round(market_cost / days, 2)
+                            # Podríamos añadir un indicador de datos parciales
+                    
                     if billing_period == current_billing_period:
-                        bills_description += f"\n|\n| {date} | {days} | {cost} | {consumption} | {day_consumption} | **{cost_kwh}** | {day_cost} |\n|"
+                        bills_description += f"\n|\n| {date} | {days} | {consumption} | {day_consumption} |"
+                        bills_description += f" **{cost}** | **{cost_kwh}** | **{day_cost}** |"
+                        bills_description += f" **{market_cost}** | **{market_cost_kwh}** | **{day_market_cost}** |\n|"
                     else:
-                        bills_description += f"\n| {date} | {days} | {cost} | {consumption} | {day_consumption} | {cost_kwh} | {day_cost} |"
+                        bills_description += f"\n| {date} | {days} | {consumption} | {day_consumption} |"
+                        bills_description += f" {cost} | {cost_kwh} | {day_cost} |"
+                        bills_description += f" {market_cost} | {market_cost_kwh} | {day_market_cost} |"
 
             _LOGGER.debug(f"current_bill_value={current_bill_value}, bills_description={bills_description}")
             hass.states.async_set(CURRENT_BILL_STATE, current_bill_value, {'detail': bills_description})
