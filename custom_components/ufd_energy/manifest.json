@@ -1,5 +1,5 @@
 {
-  "domain": "pvpc_energy",
+  "domain": "ufd_energy",
   "name": "UFD Distribución Electricidad",
   "codeowners": ["@yinyang17"],
   "config_flow": true,
@@ -9,5 +9,5 @@
   "issue_tracker":"https://github.com/yinyang17/pvpc_energy/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.4.0"
+  "version": "0.5.0"
 }

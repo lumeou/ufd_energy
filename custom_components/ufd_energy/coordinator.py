@@ -1,4 +1,4 @@
-from .const import DOMAIN, CURRENT_BILL_STATE, CONSUMPTION_STATISTIC_ID, CONSUMPTION_STATISTIC_NAME, COST_STATISTIC_ID, COST_STATISTIC_NAME, EXPORT_STATISTIC_ID, EXPORT_STATISTIC_NAME, USER_FILES_PATH, ENERGY_FILE, BILLING_PERIODS_FILE, SELFCONSUMPTION_FILE
+from .const import DOMAIN, CURRENT_BILL_STATE, CONSUMPTION_STATISTIC_ID, CONSUMPTION_STATISTIC_NAME, COST_STATISTIC_ID, COST_STATISTIC_NAME, EXPORT_STATISTIC_ID, EXPORT_STATISTIC_NAME, MARKET_COST_STATISTIC_ID, MARKET_COST_STATISTIC_NAME, USER_FILES_PATH, ENERGY_FILE, BILLING_PERIODS_FILE, SELFCONSUMPTION_FILE
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.models import (StatisticData, StatisticMeanType, StatisticMetaData,)
 from homeassistant.components.recorder.statistics import (async_add_external_statistics, get_last_statistics, statistics_during_period,)
@@ -16,7 +16,7 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 
-class PvpcCoordinator:
+class UfdEnergyCoordinator:
     ufd_login = None
     ufd_password = None
     cups = None
@@ -24,6 +24,16 @@ class PvpcCoordinator:
     contract_start_date = None
     bills_number = None
     has_self_consumption = False
+
+    market_price_entity = None
+    power_price_p1_entity = None
+    power_price_p2_entity = None
+    contracted_power_entity = None
+    meter_rent_entity = None
+    social_bonus_entity = None
+    electricity_tax_entity = None
+    iva_entity = None
+    export_compensation_entity = None
 
     consumption_metadata = StatisticMetaData(
         name=CONSUMPTION_STATISTIC_NAME,
@@ -52,18 +62,37 @@ class PvpcCoordinator:
         statistic_id=EXPORT_STATISTIC_ID,
         unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR
     )
+    market_cost_metadata = StatisticMetaData(
+        name=MARKET_COST_STATISTIC_NAME,
+        mean_type=StatisticMeanType.NONE,
+        unit_class=None,
+        has_sum=True,
+        source=DOMAIN,
+        statistic_id=MARKET_COST_STATISTIC_ID,
+        unit_of_measurement=CURRENCY_EURO,
+    )
 
 
     def set_config(config):
         _LOGGER.debug(f"START - set_config(config={config})")
-        PvpcCoordinator.ufd_login = config['ufd_login']
-        PvpcCoordinator.ufd_password = config['ufd_password']
-        PvpcCoordinator.cups = config['cups']
-        PvpcCoordinator.zip_code = config['zip_code']
+        UfdEnergyCoordinator.ufd_login = config['ufd_login']
+        UfdEnergyCoordinator.ufd_password = config['ufd_password']
+        UfdEnergyCoordinator.cups = config['cups']
+        UfdEnergyCoordinator.zip_code = config['zip_code']
         if 'contract_start_date' in config:
-            PvpcCoordinator.contract_start_date = datetime.datetime.strptime(config['contract_start_date'], '%d/%m/%Y').date()
-        PvpcCoordinator.bills_number = config['bills_number']
-        PvpcCoordinator.has_self_consumption = config.get('has_self_consumption', False)
+            UfdEnergyCoordinator.contract_start_date = datetime.datetime.strptime(config['contract_start_date'], '%d/%m/%Y').date()
+        UfdEnergyCoordinator.bills_number = config['bills_number']
+        UfdEnergyCoordinator.has_self_consumption = config.get('has_self_consumption', False)
+
+        UfdEnergyCoordinator.market_price_entity = config.get('market_price_entity')
+        UfdEnergyCoordinator.power_price_p1_entity = config.get('power_price_p1_entity')
+        UfdEnergyCoordinator.power_price_p2_entity = config.get('power_price_p2_entity')
+        UfdEnergyCoordinator.contracted_power_entity = config.get('contracted_power_entity')
+        UfdEnergyCoordinator.meter_rent_entity = config.get('meter_rent_entity')
+        UfdEnergyCoordinator.social_bonus_entity = config.get('social_bonus_entity')
+        UfdEnergyCoordinator.electricity_tax_entity = config.get('electricity_tax_entity')
+        UfdEnergyCoordinator.iva_entity = config.get('iva_entity')
+        UfdEnergyCoordinator.export_compensation_entity = config.get('export_compensation_entity')
 
         UFD.User = config['ufd_login']
         UFD.Password = config['ufd_password']
@@ -72,27 +101,27 @@ class PvpcCoordinator:
 
     async def reprocess_energy_data(hass):
         _LOGGER.debug(f"START - reprocess_statistics()")
-        consumptions, prices = await PvpcCoordinator.load_energy_data(hass, ENERGY_FILE)
+        consumptions, prices = await UfdEnergyCoordinator.load_energy_data(hass, ENERGY_FILE)
 
         _LOGGER.info(f"len(total_consumptions)={len(consumptions)}")
         if len(consumptions) > 0:
-            consumption_statistics, cost_statistics = PvpcCoordinator.create_statistics(0, consumptions, prices, 0, 0)
+            consumption_statistics, cost_statistics = UfdEnergyCoordinator.create_statistics(0, consumptions, prices, 0, 0)
             _LOGGER.info(f"len(consumption_statistics)={len(consumption_statistics)}, len(cost_statistics)={len(cost_statistics)}")
-            get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, PvpcCoordinator.consumption_metadata, consumption_statistics)
-            get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, PvpcCoordinator.cost_metadata, cost_statistics)
-            billing_periods = await PvpcCoordinator.load_billing_periods(hass, BILLING_PERIODS_FILE)
-            await PvpcCoordinator.calculate_bills(hass, billing_periods, consumptions, prices, True)
+            get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, UfdEnergyCoordinator.consumption_metadata, consumption_statistics)
+            get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, UfdEnergyCoordinator.cost_metadata, cost_statistics)
+            billing_periods = await UfdEnergyCoordinator.load_billing_periods(hass, BILLING_PERIODS_FILE)
+            await UfdEnergyCoordinator.calculate_bills(hass, billing_periods, consumptions, prices, True)
         _LOGGER.debug(f"END - reprocess_statistics()")
 
     async def import_energy_data(hass, force_update=False):
         _LOGGER.debug(f"START - import_energy_data(), force_update={force_update}")
 
         start_date = datetime.datetime(year=datetime.date.today().year - 2, month=datetime.date.today().month, day=1).date()
-        if PvpcCoordinator.contract_start_date and PvpcCoordinator.contract_start_date > start_date:
-            start_date = PvpcCoordinator.contract_start_date
+        if UfdEnergyCoordinator.contract_start_date and UfdEnergyCoordinator.contract_start_date > start_date:
+            start_date = UfdEnergyCoordinator.contract_start_date
         end_date = datetime.date.today() - datetime.timedelta(days=2)
 
-        consumptions, prices = await PvpcCoordinator.load_energy_data(hass, ENERGY_FILE, start_date)
+        consumptions, prices = await UfdEnergyCoordinator.load_energy_data(hass, ENERGY_FILE, start_date)
         consumptions_len = len(consumptions)
         prices_len = len(prices)
 
@@ -105,7 +134,7 @@ class PvpcCoordinator:
             start_billing_date = min(start_date, first_consumption_date)
 
         get_new_periods = last_consumption_date is None or end_date > last_consumption_date
-        billing_periods = await PvpcCoordinator.get_billing_periods(hass, start_billing_date, get_new_periods)
+        billing_periods = await UfdEnergyCoordinator.get_billing_periods(hass, start_billing_date, get_new_periods)
 
         first_billing_date = None
         for billing_period in billing_periods:
@@ -115,9 +144,9 @@ class PvpcCoordinator:
             start_date = first_billing_date
 
         if force_update or first_consumption_date is None or first_consumption_date > start_date:
-            await PvpcCoordinator.get_data(UFD.consumptions, start_date, end_date, consumptions, 14, force_update)
+            await UfdEnergyCoordinator.get_data(UFD.consumptions, start_date, end_date, consumptions, 14, force_update)
         elif end_date > last_consumption_date:
-            await PvpcCoordinator.get_data(UFD.consumptions, last_consumption_date + datetime.timedelta(days=1), end_date, consumptions, 14)
+            await UfdEnergyCoordinator.get_data(UFD.consumptions, last_consumption_date + datetime.timedelta(days=1), end_date, consumptions, 14)
         
         first_price_date = None
         last_price_date = None
@@ -126,19 +155,19 @@ class PvpcCoordinator:
             last_price_date = datetime.datetime.fromtimestamp(max(list(prices.keys()))).date()
 
         if force_update or first_price_date is None or first_price_date > start_date:
-            await PvpcCoordinator.get_data(REE.pvpc, start_date, end_date, prices, 28, force_update)
+            await UfdEnergyCoordinator.get_data(REE.pvpc, start_date, end_date, prices, 28, force_update)
         elif end_date > last_price_date:
-            await PvpcCoordinator.get_data(REE.pvpc, last_price_date + datetime.timedelta(days=1), end_date, prices, 28)
+            await UfdEnergyCoordinator.get_data(REE.pvpc, last_price_date + datetime.timedelta(days=1), end_date, prices, 28)
         
         if force_update or len(consumptions) > consumptions_len or len(prices) > prices_len:
-            await PvpcCoordinator.save_energy_data(hass, ENERGY_FILE, consumptions, prices)
+            await UfdEnergyCoordinator.save_energy_data(hass, ENERGY_FILE, consumptions, prices)
 
             if len(consumptions) > 0:
                 last_stat = await get_instance(hass).async_add_executor_job(get_last_statistics, hass, 1, CONSUMPTION_STATISTIC_ID, True, set())
                 if force_update or last_stat is None or first_consumption_date is None \
                     or first_consumption_date != datetime.datetime.fromtimestamp(min(list(consumptions.keys()))).date() \
                     or last_consumption_date != datetime.datetime.fromtimestamp(last_stat[CONSUMPTION_STATISTIC_ID][0]['start'], datetime.UTC).date():
-                    consumption_statistics, cost_statistics = PvpcCoordinator.create_statistics(0, consumptions, prices, 0, 0)
+                    consumption_statistics, cost_statistics = UfdEnergyCoordinator.create_statistics(0, consumptions, prices, 0, 0)
                 else:
                     start = datetime.datetime.fromtimestamp(last_stat[CONSUMPTION_STATISTIC_ID][0]['start'], datetime.UTC)
                     stats = await get_instance(hass).async_add_executor_job(statistics_during_period, hass, start, None, {CONSUMPTION_STATISTIC_ID, COST_STATISTIC_ID}, 'hour', None, {'sum'})
@@ -146,14 +175,26 @@ class PvpcCoordinator:
                     total_energy_cost = stats[COST_STATISTIC_ID][0]["sum"]
                     last_statistic_timestamp = stats[COST_STATISTIC_ID][0]["start"]
                     _LOGGER.info(f"last_stat={last_stat}, stats={stats}")
-                    consumption_statistics, cost_statistics = PvpcCoordinator.create_statistics(last_statistic_timestamp, consumptions, prices, total_energy_consumption, total_energy_cost)
+                    consumption_statistics, cost_statistics = UfdEnergyCoordinator.create_statistics(last_statistic_timestamp, consumptions, prices, total_energy_consumption, total_energy_cost)
 
                 _LOGGER.info(f"len(consumption_statistics)={len(consumption_statistics)}, len(cost_statistics)={len(cost_statistics)}")
-                get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, PvpcCoordinator.consumption_metadata, consumption_statistics)
-                get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, PvpcCoordinator.cost_metadata, cost_statistics)
-                await PvpcCoordinator.calculate_bills(hass, billing_periods, consumptions, prices, force_update)
+                get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, UfdEnergyCoordinator.consumption_metadata, consumption_statistics)
+                get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, UfdEnergyCoordinator.cost_metadata, cost_statistics)
+                await UfdEnergyCoordinator.calculate_bills(hass, billing_periods, consumptions, prices, force_update)
         elif not hass.states.get(CURRENT_BILL_STATE) and len(consumptions) > 0:
-            await PvpcCoordinator.calculate_bills(hass, billing_periods, consumptions, prices, force_update)
+            await UfdEnergyCoordinator.calculate_bills(hass, billing_periods, consumptions, prices, force_update)
+
+        if UfdEnergyCoordinator.has_self_consumption:
+            try:
+                await UfdEnergyCoordinator.import_selfconsumption_data(hass, start_date, end_date, force_update)
+            except Exception:
+                _LOGGER.exception("Error importando datos de autoconsumo")
+
+        if UfdEnergyCoordinator.market_price_entity:
+            try:
+                await UfdEnergyCoordinator.import_market_cost_data(hass, consumptions)
+            except Exception:
+                _LOGGER.exception("Error calculando el coste con la tarifa de mercado libre")
 
         if PvpcCoordinator.has_self_consumption:
             try:
@@ -163,10 +204,188 @@ class PvpcCoordinator:
 
         _LOGGER.debug(f"END - import_energy_data")
 
+    def get_entity_value(hass, entity_id):
+        if not entity_id:
+            return None
+        state = hass.states.get(entity_id)
+        if state is None or state.state in (None, '', 'unknown', 'unavailable'):
+            return None
+        try:
+            return float(state.state)
+        except (ValueError, TypeError):
+            return None
+
+    async def import_market_cost_data(hass, consumptions):
+        _LOGGER.debug(f"START - import_market_cost_data(len(consumptions)={len(consumptions)})")
+
+        if len(consumptions) == 0:
+            _LOGGER.debug(f"END - import_market_cost_data: sin consumos")
+            return
+
+        selfconsumptions = await UfdEnergyCoordinator.load_selfconsumption_data(hass, SELFCONSUMPTION_FILE)
+
+        last_stat = await get_instance(hass).async_add_executor_job(get_last_statistics, hass, 1, MARKET_COST_STATISTIC_ID, True, {'sum'})
+        if last_stat:
+            start_timestamp = last_stat[MARKET_COST_STATISTIC_ID][0]['start'] + 3600
+            total_cost = last_stat[MARKET_COST_STATISTIC_ID][0]['sum']
+        else:
+            # No se rellena el histórico pasado: se empieza a contar desde hoy, nunca hacia atrás
+            start_timestamp = int(time.mktime(datetime.date.today().timetuple()))
+            total_cost = 0.0
+
+        timestamps = sorted(t for t in consumptions.keys() if t >= start_timestamp)
+        if len(timestamps) == 0:
+            _LOGGER.debug(f"END - import_market_cost_data: no hay horas nuevas que calcular")
+            return
+
+        market_price = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.market_price_entity)
+        power_p1 = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.power_price_p1_entity)
+        power_p2 = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.power_price_p2_entity)
+        contracted_power = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.contracted_power_entity)
+        meter_rent = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.meter_rent_entity)
+        social_bonus = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.social_bonus_entity)
+        electricity_tax = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.electricity_tax_entity)
+        iva = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.iva_entity)
+        export_compensation = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.export_compensation_entity)
+
+        fixed_daily = 0.0
+        if power_p1 is not None and power_p2 is not None and contracted_power is not None:
+            fixed_daily += contracted_power * (power_p1 + power_p2)
+        if meter_rent is not None:
+            fixed_daily += meter_rent
+        if social_bonus is not None:
+            fixed_daily += social_bonus
+        fixed_hourly = fixed_daily / 24
+
+        market_cost_statistics = []
+        day_cost = 0.0
+        for timestamp in timestamps:
+            grid_kwh = consumptions[timestamp]['value']
+            export_kwh = selfconsumptions.get(timestamp, {}).get('export', 0.0)
+
+            energia = grid_kwh * market_price if market_price is not None else 0.0
+            excedente = export_kwh * export_compensation if export_compensation is not None else 0.0
+            base = energia + fixed_hourly - excedente
+
+            impuesto = base * (electricity_tax / 100) if electricity_tax is not None else 0.0
+            subtotal = base + impuesto
+            iva_amount = subtotal * (iva / 100) if iva is not None else 0.0
+            hour_cost = subtotal + iva_amount
+
+            total_cost += hour_cost
+            day_cost += hour_cost
+            if datetime.datetime.fromtimestamp(timestamp).hour == 0:
+                day_cost = hour_cost
+
+            start = datetime.datetime.fromtimestamp(timestamp, datetime.UTC)
+            market_cost_statistics.append(
+                StatisticData(start=start, state=day_cost, sum=total_cost)
+            )
+
+        _LOGGER.info(f"len(market_cost_statistics)={len(market_cost_statistics)}")
+        get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, UfdEnergyCoordinator.market_cost_metadata, market_cost_statistics)
+        _LOGGER.debug(f"END - import_market_cost_data")
+
+    async def reprocess_market_cost(hass):
+        _LOGGER.debug(f"START - reprocess_market_cost()")
+
+        if not UfdEnergyCoordinator.market_price_entity:
+            _LOGGER.warning("reprocess_market_cost: no hay 'market_price_entity' configurado, nada que reprocesar")
+            return
+
+        consumptions, _ = await UfdEnergyCoordinator.load_energy_data(hass, ENERGY_FILE)
+        if len(consumptions) == 0:
+            _LOGGER.debug(f"END - reprocess_market_cost: sin consumos")
+            return
+        selfconsumptions = await UfdEnergyCoordinator.load_selfconsumption_data(hass, SELFCONSUMPTION_FILE)
+
+        entities = {
+            'market_price': UfdEnergyCoordinator.market_price_entity,
+            'power_p1': UfdEnergyCoordinator.power_price_p1_entity,
+            'power_p2': UfdEnergyCoordinator.power_price_p2_entity,
+            'contracted_power': UfdEnergyCoordinator.contracted_power_entity,
+            'meter_rent': UfdEnergyCoordinator.meter_rent_entity,
+            'social_bonus': UfdEnergyCoordinator.social_bonus_entity,
+            'electricity_tax': UfdEnergyCoordinator.electricity_tax_entity,
+            'iva': UfdEnergyCoordinator.iva_entity,
+            'export_compensation': UfdEnergyCoordinator.export_compensation_entity,
+        }
+        configured_entities = {name: entity_id for name, entity_id in entities.items() if entity_id}
+
+        # Valor medio horario histórico (long-term statistics) de cada sensor/helper de tarifa.
+        # Los helpers necesitan state_class: measurement para tener estas estadísticas (ej. template sensors).
+        start = datetime.datetime.fromtimestamp(min(consumptions.keys()), datetime.UTC)
+        end = datetime.datetime.fromtimestamp(max(consumptions.keys()), datetime.UTC) + datetime.timedelta(hours=1)
+        stats = await get_instance(hass).async_add_executor_job(
+            statistics_during_period, hass, start, end, set(configured_entities.values()), 'hour', None, {'mean'}
+        )
+        values_by_entity = {
+            entity_id: {int(row['start']): row['mean'] for row in rows if row['mean'] is not None}
+            for entity_id, rows in stats.items()
+        }
+
+        def get_value(name, timestamp):
+            entity_id = configured_entities.get(name)
+            if not entity_id:
+                return None
+            return values_by_entity.get(entity_id, {}).get(timestamp)
+
+        timestamps = sorted(consumptions.keys())
+        total_cost = 0.0
+        day_cost = 0.0
+        market_cost_statistics = []
+        for timestamp in timestamps:
+            grid_kwh = consumptions[timestamp]['value']
+            export_kwh = selfconsumptions.get(timestamp, {}).get('export', 0.0)
+
+            market_price = get_value('market_price', timestamp)
+            energia = grid_kwh * market_price if market_price is not None else 0.0
+
+            power_p1 = get_value('power_p1', timestamp)
+            power_p2 = get_value('power_p2', timestamp)
+            contracted_power = get_value('contracted_power', timestamp)
+            fixed_daily = 0.0
+            if power_p1 is not None and power_p2 is not None and contracted_power is not None:
+                fixed_daily += contracted_power * (power_p1 + power_p2)
+            meter_rent = get_value('meter_rent', timestamp)
+            if meter_rent is not None:
+                fixed_daily += meter_rent
+            social_bonus = get_value('social_bonus', timestamp)
+            if social_bonus is not None:
+                fixed_daily += social_bonus
+            fixed_hourly = fixed_daily / 24
+
+            export_compensation = get_value('export_compensation', timestamp)
+            excedente = export_kwh * export_compensation if export_compensation is not None else 0.0
+
+            base = energia + fixed_hourly - excedente
+
+            electricity_tax = get_value('electricity_tax', timestamp)
+            impuesto = base * (electricity_tax / 100) if electricity_tax is not None else 0.0
+            subtotal = base + impuesto
+
+            iva = get_value('iva', timestamp)
+            iva_amount = subtotal * (iva / 100) if iva is not None else 0.0
+            hour_cost = subtotal + iva_amount
+
+            total_cost += hour_cost
+            day_cost += hour_cost
+            if datetime.datetime.fromtimestamp(timestamp).hour == 0:
+                day_cost = hour_cost
+
+            start_dt = datetime.datetime.fromtimestamp(timestamp, datetime.UTC)
+            market_cost_statistics.append(
+                StatisticData(start=start_dt, state=day_cost, sum=total_cost)
+            )
+
+        _LOGGER.info(f"len(market_cost_statistics)={len(market_cost_statistics)}")
+        get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, UfdEnergyCoordinator.market_cost_metadata, market_cost_statistics)
+        _LOGGER.debug(f"END - reprocess_market_cost")
+
     async def import_selfconsumption_data(hass, start_date, end_date, force_update=False):
         _LOGGER.debug(f"START - import_selfconsumption_data(start_date={start_date.isoformat()}, end_date={end_date.isoformat()}, force_update={force_update})")
 
-        selfconsumptions = await PvpcCoordinator.load_selfconsumption_data(hass, SELFCONSUMPTION_FILE)
+        selfconsumptions = await UfdEnergyCoordinator.load_selfconsumption_data(hass, SELFCONSUMPTION_FILE)
         selfconsumptions_len = len(selfconsumptions)
 
         last_selfconsumption_date = None
@@ -174,28 +393,34 @@ class PvpcCoordinator:
             last_selfconsumption_date = datetime.datetime.fromtimestamp(max(selfconsumptions.keys())).date()
 
         if force_update or last_selfconsumption_date is None:
-            await PvpcCoordinator.get_data(UFD.selfConsumptions, start_date, end_date, selfconsumptions, 14, force_update)
+            await UfdEnergyCoordinator.get_data(UFD.selfConsumptions, start_date, end_date, selfconsumptions, 14, force_update)
         elif end_date > last_selfconsumption_date:
-            await PvpcCoordinator.get_data(UFD.selfConsumptions, last_selfconsumption_date + datetime.timedelta(days=1), end_date, selfconsumptions, 14)
+            await UfdEnergyCoordinator.get_data(UFD.selfConsumptions, last_selfconsumption_date + datetime.timedelta(days=1), end_date, selfconsumptions, 14)
 
         if force_update or len(selfconsumptions) > selfconsumptions_len:
-            await PvpcCoordinator.save_selfconsumption_data(hass, SELFCONSUMPTION_FILE, selfconsumptions)
+            await UfdEnergyCoordinator.save_selfconsumption_data(hass, SELFCONSUMPTION_FILE, selfconsumptions)
 
-            if len(selfconsumptions) > 0:
-                last_stat = await get_instance(hass).async_add_executor_job(get_last_statistics, hass, 1, EXPORT_STATISTIC_ID, True, set())
-                first_selfconsumption_date = datetime.datetime.fromtimestamp(min(selfconsumptions.keys())).date()
-                if force_update or not last_stat \
-                    or first_selfconsumption_date != datetime.datetime.fromtimestamp(min(selfconsumptions.keys())).date():
-                    export_statistics = PvpcCoordinator.create_export_statistics(0, selfconsumptions, 0)
-                else:
-                    start = datetime.datetime.fromtimestamp(last_stat[EXPORT_STATISTIC_ID][0]['start'], datetime.UTC)
-                    stats = await get_instance(hass).async_add_executor_job(statistics_during_period, hass, start, None, {EXPORT_STATISTIC_ID}, 'hour', None, {'sum'})
-                    total_export = stats[EXPORT_STATISTIC_ID][0]["sum"]
-                    last_statistic_timestamp = stats[EXPORT_STATISTIC_ID][0]["start"]
-                    export_statistics = PvpcCoordinator.create_export_statistics(last_statistic_timestamp, selfconsumptions, total_export)
+        if len(selfconsumptions) > 0:
+            last_stat = await get_instance(hass).async_add_executor_job(get_last_statistics, hass, 1, EXPORT_STATISTIC_ID, True, {'sum'})
+            # Aunque no haya llegado ninguna fila nueva de UFD en esta ejecución (su dato horario
+            # suele llevar un par de días de retraso), si la estadística todavía no existe en el
+            # recorder hay que crearla igualmente a partir de lo que ya tengamos en el CSV/memoria
+            # (por ejemplo, ficheros migrados a mano). No depender solo de "hay filas nuevas".
+            if force_update or not last_stat:
+                export_statistics = UfdEnergyCoordinator.create_export_statistics(0, selfconsumptions, 0)
+            elif len(selfconsumptions) > selfconsumptions_len:
+                start = datetime.datetime.fromtimestamp(last_stat[EXPORT_STATISTIC_ID][0]['start'], datetime.UTC)
+                stats = await get_instance(hass).async_add_executor_job(statistics_during_period, hass, start, None, {EXPORT_STATISTIC_ID}, 'hour', None, {'sum'})
+                total_export = stats[EXPORT_STATISTIC_ID][0]["sum"]
+                last_statistic_timestamp = stats[EXPORT_STATISTIC_ID][0]["start"]
+                export_statistics = UfdEnergyCoordinator.create_export_statistics(last_statistic_timestamp, selfconsumptions, total_export)
+            else:
+                export_statistics = None
 
+            if export_statistics:
                 _LOGGER.info(f"len(export_statistics)={len(export_statistics)}")
-                get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, PvpcCoordinator.export_metadata, export_statistics)
+                get_instance(hass).async_add_executor_job(async_add_external_statistics, hass, UfdEnergyCoordinator.export_metadata, export_statistics)
+
 
         _LOGGER.debug(f"END - import_selfconsumption_data")
 
@@ -276,7 +501,7 @@ class PvpcCoordinator:
 
     async def get_billing_periods(hass, start_billing_date, get_new_periods):
         _LOGGER.debug(f"START - get_billing_periods(start_billing_date={start_billing_date}, get_new_periods={get_new_periods})")
-        billing_periods = await PvpcCoordinator.load_billing_periods(hass, BILLING_PERIODS_FILE)
+        billing_periods = await UfdEnergyCoordinator.load_billing_periods(hass, BILLING_PERIODS_FILE)
 
         if start_billing_date:
             remove_periods = []
@@ -286,7 +511,7 @@ class PvpcCoordinator:
             if len(remove_periods) > 0:
                 for billing_period in remove_periods:
                     billing_periods.remove(billing_period)
-                await PvpcCoordinator.save_billing_periods(hass, BILLING_PERIODS_FILE, billing_periods)
+                await UfdEnergyCoordinator.save_billing_periods(hass, BILLING_PERIODS_FILE, billing_periods)
 
         if len(billing_periods) == 0:
             start_date = datetime.date(2000, 1, 1)
@@ -306,7 +531,7 @@ class PvpcCoordinator:
             new_billing_periods = await UFD.billingPeriods(start_date, end_date)
             if len(new_billing_periods) > 0:
                 billing_periods += new_billing_periods
-                await PvpcCoordinator.save_billing_periods(hass, BILLING_PERIODS_FILE, billing_periods)
+                await UfdEnergyCoordinator.save_billing_periods(hass, BILLING_PERIODS_FILE, billing_periods)
         _LOGGER.debug(f"END - get_billing_periods: len(billing_periods)={len(billing_periods)}")
         return billing_periods
 
@@ -319,17 +544,17 @@ class PvpcCoordinator:
             last_consumption_date = datetime.datetime.fromtimestamp(max(consumptions.keys())).date()
             for billing_period in reversed(billing_periods):
                 if billing_period['start_date'] >= first_consumption_date and (force_update or 'total_cost' not in billing_period):
-                    billing_period = await PvpcCoordinator.get_bill(hass, billing_period, consumptions)
+                    billing_period = await UfdEnergyCoordinator.get_bill(hass, billing_period, consumptions)
                     if 'total_cost' in billing_period:
                         update = True
             if update:
-                await PvpcCoordinator.save_billing_periods(hass, BILLING_PERIODS_FILE, billing_periods)
+                await UfdEnergyCoordinator.save_billing_periods(hass, BILLING_PERIODS_FILE, billing_periods)
 
             current_billing_period = None
             if (last_consumption_date - billing_periods[-1]['end_date']).days >= 2:
                 current_billing_period = {'start_date': billing_periods[-1]['end_date'] + datetime.timedelta(days=1), 'end_date':last_consumption_date}
-                current_billing_period['power_high'], current_billing_period['power_low'] = await UFD.supplyPointPowers(PvpcCoordinator.cups)
-                current_billing_period = await PvpcCoordinator.get_bill(hass, current_billing_period, consumptions)
+                current_billing_period['power_high'], current_billing_period['power_low'] = await UFD.supplyPointPowers(UfdEnergyCoordinator.cups)
+                current_billing_period = await UfdEnergyCoordinator.get_bill(hass, current_billing_period, consumptions)
 
             current_bill_value = ''
             bills_description = ''
@@ -346,7 +571,7 @@ class PvpcCoordinator:
                     
             bills_description += '| Fecha | Días | Importe | kWh | kWh/día | cent/kWh | €/día |\n'
             bills_description += '| :---: | :---: | :---: | :---: | :---: | :---: | :---: |'
-            for billing_period in reversed(billing_periods[-PvpcCoordinator.bills_number:]):
+            for billing_period in reversed(billing_periods[-UfdEnergyCoordinator.bills_number:]):
                 if 'total_cost' in billing_period and billing_period['total_cost'] != '-':
                     date = billing_period['end_date'].strftime('%d/%m')
                     days = (billing_period['end_date'] - billing_period['start_date']).days + 1
@@ -378,7 +603,7 @@ class PvpcCoordinator:
             if start_timestamp <= timestamp <= end_timestamp:
                 bill_consumptions[timestamp] = consumption['value']
         if bill_consumptions:
-            billing_period, consumptions_file = await CNMC.calculate_bill(billing_period, PvpcCoordinator.cups, bill_consumptions, PvpcCoordinator.zip_code)
+            billing_period, consumptions_file = await CNMC.calculate_bill(billing_period, UfdEnergyCoordinator.cups, bill_consumptions, UfdEnergyCoordinator.zip_code)
             if consumptions_file is not None:
                 path = f"{USER_FILES_PATH}/consumption_files/{billing_period['start_date'].year}"
                 if not exists(path):
@@ -458,7 +683,7 @@ class PvpcCoordinator:
             with await hass.async_add_executor_job(open, file_path, 'r') as file:
                 if file.readline().count(',') == 7:
                     update = True
-                    power_high, power_low = await UFD.supplyPointPowers(PvpcCoordinator.cups)
+                    power_high, power_low = await UFD.supplyPointPowers(UfdEnergyCoordinator.cups)
                 for line in file:
                     if line.count(',') == 7:
                         start_date, end_date, total_cost, power_cost, energy_cost, rent_cost, tax_cost, total_consumption = line[0:-1].split(',')
@@ -480,7 +705,7 @@ class PvpcCoordinator:
                     if total_consumption != '': billing_period['total_consumption'] = float(total_consumption)
                     billing_periods.append(billing_period)
         if update:
-            await PvpcCoordinator.save_billing_periods(hass, file_path, billing_periods)
+            await UfdEnergyCoordinator.save_billing_periods(hass, file_path, billing_periods)
         _LOGGER.debug(f"END - load_billing_periods: len(billing_periods): {len(billing_periods)}")
         return billing_periods
 

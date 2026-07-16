@@ -1,0 +1,57 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "UFD",
+        "description": "Enter de UFD credentials and data. You need to have two-step login disabled",
+        "data": {
+          "ufd_login": "UFD login",
+          "ufd_password": "UFD password"
+        }
+      },
+      "cups": {
+        "title": "UFD",
+        "description": "Enter the CUPS and the number of bills to show in Markdown Card",
+        "data": {
+          "bills_number": "Number of bills",
+          "has_self_consumption": "I have a solar self-consumption installation"
+        }
+      },
+      "market_tariff": {
+        "title": "Free market tariff (optional)",
+        "description": "If you have them, point to the sensors/helpers with these tariff values. All fields are optional and can be left blank or set up later from 'Configure'.",
+        "data": {
+          "market_price_entity": "Energy price sensor (€/kWh, before taxes)",
+          "power_price_p1_entity": "Power price sensor P1 (€/kW day)",
+          "power_price_p2_entity": "Power price sensor P2 (€/kW day)",
+          "contracted_power_entity": "Contracted power sensor (kW)",
+          "meter_rent_entity": "Meter rental sensor (€/day)",
+          "social_bonus_entity": "Social bonus funding sensor (€/day)",
+          "electricity_tax_entity": "Electricity tax sensor (%)",
+          "iva_entity": "VAT sensor (%)",
+          "export_compensation_entity": "Export compensation sensor (€/kWh)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Free market tariff (optional)",
+        "description": "If you have them, point to the sensors/helpers with these tariff values. All fields are optional and can be left blank or set up later from 'Configure'.",
+        "data": {
+          "has_self_consumption": "I have a solar self-consumption installation",
+          "market_price_entity": "Energy price sensor (€/kWh, before taxes)",
+          "power_price_p1_entity": "Power price sensor P1 (€/kW day)",
+          "power_price_p2_entity": "Power price sensor P2 (€/kW day)",
+          "contracted_power_entity": "Contracted power sensor (kW)",
+          "meter_rent_entity": "Meter rental sensor (€/day)",
+          "social_bonus_entity": "Social bonus funding sensor (€/day)",
+          "electricity_tax_entity": "Electricity tax sensor (%)",
+          "iva_entity": "VAT sensor (%)",
+          "export_compensation_entity": "Export compensation sensor (€/kWh)"
+        }
+      }
+    }
+  }
+}
