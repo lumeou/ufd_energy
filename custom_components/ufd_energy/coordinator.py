@@ -196,12 +196,6 @@ class UfdEnergyCoordinator:
             except Exception:
                 _LOGGER.exception("Error calculando el coste con la tarifa de mercado libre")
 
-        if PvpcCoordinator.has_self_consumption:
-            try:
-                await PvpcCoordinator.import_selfconsumption_data(hass, start_date, end_date, force_update)
-            except Exception:
-                _LOGGER.exception("Error importando datos de autoconsumo")
-
         _LOGGER.debug(f"END - import_energy_data")
 
     def get_entity_value(hass, entity_id):
@@ -535,6 +529,25 @@ class UfdEnergyCoordinator:
         _LOGGER.debug(f"END - get_billing_periods: len(billing_periods)={len(billing_periods)}")
         return billing_periods
 
+    async def get_market_cost_for_period(hass, start_date, end_date):
+        if not UfdEnergyCoordinator.market_price_entity:
+            return None, None
+        start = datetime.datetime.combine(start_date, datetime.time.min, tzinfo=datetime.UTC)
+        end = datetime.datetime.combine(end_date + datetime.timedelta(days=1), datetime.time.min, tzinfo=datetime.UTC)
+        stats = await get_instance(hass).async_add_executor_job(
+            statistics_during_period, hass, start, end, {MARKET_COST_STATISTIC_ID}, 'hour', None, {'sum', 'state'}
+        )
+        rows = stats.get(MARKET_COST_STATISTIC_ID)
+        if not rows:
+            return None, None
+        # sum() es acumulado desde siempre; el coste de este rango es la diferencia entre el
+        # acumulado al final y el acumulado justo antes de la primera hora devuelta.
+        cost = rows[-1]['sum'] - (rows[0]['sum'] - rows[0]['state'])
+        # market_cost no rellena histórico: covered_from es desde cuándo hay datos reales en
+        # este rango (puede ser posterior a start_date si la tarifa se activó a mitad del periodo).
+        covered_from = max(start_date, datetime.datetime.fromtimestamp(rows[0]['start'], datetime.UTC).date())
+        return cost, covered_from
+
     async def calculate_bills(hass, billing_periods, consumptions, prices, force_update=False):
         _LOGGER.debug(f"START - calculate_bills(len(billing_periods)={len(billing_periods)}, len(consumptions)={len(consumptions)}, len(prices)={len(prices)}, force_update={force_update})")
 
@@ -567,7 +580,17 @@ class UfdEnergyCoordinator:
                 if estimation_days > days:
                     estimation_end_date = current_billing_period['start_date'] + datetime.timedelta(days=estimation_days-1)
                     cost = round(current_billing_period['total_cost'] / days * estimation_days, 2)
-                    bills_description += f"Estimación {current_billing_period['start_date'].strftime('%d/%m')} - {estimation_end_date.strftime('%d/%m')} ({estimation_days} días): **{cost} €**\n\n"
+                    bills_description += f"Estimación PVPC {current_billing_period['start_date'].strftime('%d/%m')} - {estimation_end_date.strftime('%d/%m')} ({estimation_days} días): **{cost} €**\n\n"
+
+                    market_cost, market_cost_covered_from = await UfdEnergyCoordinator.get_market_cost_for_period(
+                        hass, current_billing_period['start_date'], current_billing_period['end_date']
+                    )
+                    if market_cost is not None:
+                        covered_days = (current_billing_period['end_date'] - market_cost_covered_from).days + 1
+                        market_estimate = round(market_cost / covered_days * estimation_days, 2)
+                        note = '' if market_cost_covered_from <= current_billing_period['start_date'] \
+                            else f" _(datos desde {market_cost_covered_from.strftime('%d/%m')}, no cubre todo el periodo)_"
+                        bills_description += f"Estimación mercado libre {current_billing_period['start_date'].strftime('%d/%m')} - {estimation_end_date.strftime('%d/%m')} ({estimation_days} días): **{market_estimate} €**{note}\n\n"
                     
             bills_description += '| Fecha | Días | Importe | kWh | kWh/día | cent/kWh | €/día |\n'
             bills_description += '| :---: | :---: | :---: | :---: | :---: | :---: | :---: |'
