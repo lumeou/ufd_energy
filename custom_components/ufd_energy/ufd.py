@@ -29,6 +29,7 @@ class UFD:
     supplypoints_url = "https://mapi.ufd.es/ufd-cdi-exp-pds/api/pds/ufd/v1.0/supplypoints?filter=documentNumber::{nif}"
     billingPeriods_url = "https://mapi.ufd.es/ufd-cdi-exp-pds/api/pds/ufd/v1.0/billingPeriods?filter=cups::{cups}%7CstartDate::{start_date}%7CendDate::{end_date}"
     consumptions_url = "https://mapi.ufd.es/ufd-cdi-exp-pds/api/pds/ufd/v1.0/consumptions?filter=nif::{nif}%7Ccups::{cups}%7CstartDate::{start_date}%7CendDate::{end_date}%7Cgranularity::H%7Cunit::K%7Cgenerator::0%7CisDelegate::N%7CisSelfConsumption::0%7CmeasurementSystem::O"
+    selfconsumptions_url = "https://mapi.ufd.es/ufd-cdi-exp-pds/api/pds/ufd/v1.0/consumptions?filter=nif::{nif}%7Ccups::{cups}%7CstartDate::{start_date}%7CendDate::{end_date}%7Cgranularity::H%7Cunit::K%7Cgenerator::0%7CisDelegate::N%7CisSelfConsumption::1%7CmeasurementSystem::O"
 
     NO_NEW_BILLS = "No existen facturas en el periodo"
     CAPTCHA_PROVIDERS = ("perfdrive.com", "shieldsquare.com")
@@ -349,6 +350,49 @@ class UFD:
         _LOGGER.debug(f"END - UFD.consumptions: len(result)={'None' if result is None else len(result)}")
         return result
     
+    def _parseSelfConsumptionValue(raw_value):
+        if raw_value in (None, ''):
+            return None
+        return float(raw_value.replace(',', '.'))
+
+    async def selfConsumptions(start_date, end_date):
+        _LOGGER.debug(f"START - UFD.selfConsumptions(start_date={start_date.isoformat()}, end_date={end_date.isoformat()})")
+
+        result = None
+        session = await UFD.getSession()
+        headers = await UFD.getHeaders(session)
+        url = UFD.selfconsumptions_url.format(nif=UFD.nif, cups=UFD.cups, start_date=start_date.strftime('%d/%m/%Y'),
+                                              end_date=end_date.strftime('%d/%m/%Y'))
+        _LOGGER.info(f"UFD.selfConsumptions(start_date={start_date.isoformat()}, end_date={end_date.isoformat()})")
+        response = await UFD.getResponse(session, url, headers)
+        if response is not None:
+            result = {}
+            items = response.get('selfConsumptions', {}).get('items', [])
+            for item in items:
+                # Sin granularity::H (o si UFD devuelve un resumen diario/mensual) 'hour' viene vacio;
+                # esos registros se descartan porque no se pueden ubicar en una hora concreta.
+                if not item.get('hour'):
+                    continue
+                hour = int(item['hour'])
+                date_str = item['date']
+                if len(date_str) != 10:
+                    continue
+                day = datetime.datetime.strptime(date_str, '%d/%m/%Y').date()
+                if not (start_date <= day <= end_date):
+                    continue
+                if len(items) == 23 and hour == 3:
+                    # Cambio de hora (como en UFD.consumptions): la hora 3 corresponde al tramo 1-2
+                    hour = 2
+                timestamp = int(time.mktime(time.strptime(f"{date_str} {(hour - 1):02}", '%d/%m/%Y %H')))
+                result[timestamp] = {
+                    'grid': UFD._parseSelfConsumptionValue(item.get('EHCR')) or 0.0,
+                    'self_consumed': UFD._parseSelfConsumptionValue(item.get('EHAC')) or 0.0,
+                    'export': UFD._parseSelfConsumptionValue(item.get('EHEX')) or 0.0,
+                }
+
+        _LOGGER.debug(f"END - UFD.selfConsumptions: len(result)={'None' if result is None else len(result)}")
+        return result
+
     async def billingPeriods(start_date, end_date):
         _LOGGER.debug(f"START - UFD.billingPeriods(start_date={start_date.isoformat()}, end_date={end_date.isoformat()})")
         result = []

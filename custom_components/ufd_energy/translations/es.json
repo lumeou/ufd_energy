@@ -1,0 +1,57 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "UFD",
+        "description": "Introduce las credenciales de UFD. Es necesario tener desactivado el inicio de sesión en dos pasos",
+        "data": {
+          "ufd_login": "UFD login",
+          "ufd_password": "UFD password"
+        }
+      },
+      "cups": {
+        "title": "UFD",
+        "description": "Indica el CUPS y el número de facturas para la tarjeta Markdown",
+        "data": {
+          "bills_number": "Número de facturas",
+          "has_self_consumption": "Tengo instalación de autoconsumo solar"
+        }
+      },
+      "market_tariff": {
+        "title": "Tarifa de mercado libre (opcional)",
+        "description": "Indica, si quieres, los sensores/helpers que ya tengas con estos datos de tu tarifa. Todos los campos son opcionales y se pueden dejar en blanco o configurar más adelante desde 'Configurar'.",
+        "data": {
+          "market_price_entity": "Sensor de precio de la energía (€/kWh, sin impuestos)",
+          "power_price_p1_entity": "Sensor de precio de potencia P1 (€/kW día)",
+          "power_price_p2_entity": "Sensor de precio de potencia P2 (€/kW día)",
+          "contracted_power_entity": "Sensor de potencia contratada (kW)",
+          "meter_rent_entity": "Sensor de alquiler del contador (€/día)",
+          "social_bonus_entity": "Sensor de financiación del bono social (€/día)",
+          "electricity_tax_entity": "Sensor del impuesto eléctrico (%)",
+          "iva_entity": "Sensor del IVA (%)",
+          "export_compensation_entity": "Sensor de compensación de excedentes (€/kWh)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tarifa de mercado libre (opcional)",
+        "description": "Indica, si quieres, los sensores/helpers que ya tengas con estos datos de tu tarifa. Todos los campos son opcionales y se pueden dejar en blanco o configurar más adelante desde 'Configurar'.",
+        "data": {
+          "has_self_consumption": "Tengo instalación de autoconsumo solar",
+          "market_price_entity": "Sensor de precio de la energía (€/kWh, sin impuestos)",
+          "power_price_p1_entity": "Sensor de precio de potencia P1 (€/kW día)",
+          "power_price_p2_entity": "Sensor de precio de potencia P2 (€/kW día)",
+          "contracted_power_entity": "Sensor de potencia contratada (kW)",
+          "meter_rent_entity": "Sensor de alquiler del contador (€/día)",
+          "social_bonus_entity": "Sensor de financiación del bono social (€/día)",
+          "electricity_tax_entity": "Sensor del impuesto eléctrico (%)",
+          "iva_entity": "Sensor del IVA (%)",
+          "export_compensation_entity": "Sensor de compensación de excedentes (€/kWh)"
+        }
+      }
+    }
+  }
+}
