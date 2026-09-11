@@ -26,9 +26,7 @@ class UfdEnergyCoordinator:
     has_self_consumption = False
 
     market_price_entity = None
-    power_price_p1_entity = None
-    power_price_p2_entity = None
-    contracted_power_entity = None
+    power_price_entity = None
     meter_rent_entity = None
     social_bonus_entity = None
     electricity_tax_entity = None
@@ -85,9 +83,7 @@ class UfdEnergyCoordinator:
         UfdEnergyCoordinator.has_self_consumption = config.get('has_self_consumption', False)
 
         UfdEnergyCoordinator.market_price_entity = config.get('market_price_entity')
-        UfdEnergyCoordinator.power_price_p1_entity = config.get('power_price_p1_entity')
-        UfdEnergyCoordinator.power_price_p2_entity = config.get('power_price_p2_entity')
-        UfdEnergyCoordinator.contracted_power_entity = config.get('contracted_power_entity')
+        UfdEnergyCoordinator.power_price_entity = config.get('power_price_entity')
         UfdEnergyCoordinator.meter_rent_entity = config.get('meter_rent_entity')
         UfdEnergyCoordinator.social_bonus_entity = config.get('social_bonus_entity')
         UfdEnergyCoordinator.electricity_tax_entity = config.get('electricity_tax_entity')
@@ -209,6 +205,122 @@ class UfdEnergyCoordinator:
         except (ValueError, TypeError):
             return None
 
+    def get_price_entities():
+        """Entidades de precio/tarifa configuradas, indexadas por nombre lógico."""
+        entities = {
+            'market_price': UfdEnergyCoordinator.market_price_entity,
+            'power_price': UfdEnergyCoordinator.power_price_entity,
+            'meter_rent': UfdEnergyCoordinator.meter_rent_entity,
+            'social_bonus': UfdEnergyCoordinator.social_bonus_entity,
+            'electricity_tax': UfdEnergyCoordinator.electricity_tax_entity,
+            'iva': UfdEnergyCoordinator.iva_entity,
+            'export_compensation': UfdEnergyCoordinator.export_compensation_entity,
+        }
+        return {name: entity_id for name, entity_id in entities.items() if entity_id}
+
+    # Entidades cuyo coste SÍ debe calcularse con el histórico horario real
+    # (varían por hora: el precio de mercado). Todas las demás son ajustes de
+    # contrato casi constantes (potencia, alquiler, bono social, impuestos,
+    # compensación de excedentes) que normalmente se configuran con helpers
+    # sin `state_class`, así que no tienen estadísticas históricas: para esas,
+    # si no hay valor histórico para la hora, se usa el valor actual en vivo
+    # como aproximación en lugar de tratarlas silenciosamente como 0€.
+    HOURLY_VARYING_ENTITIES = {'market_price'}
+
+    async def get_hourly_price_values(hass, timestamps, configured_entities):
+        """Valor medio horario histórico (long-term statistics) de cada entidad
+        de precio/tarifa, para el rango de `timestamps` dado.
+
+        Solo tiene sentido para entidades con `state_class` y estadísticas
+        generadas por el Recorder. Las que no las tengan devolverán un diccionario
+        vacío aquí, y `compute_hour_cost` decidirá si recurre al valor en vivo
+        como aproximación (ver HOURLY_VARYING_ENTITIES).
+        """
+        if not configured_entities or not timestamps:
+            return {}
+
+        start = datetime.datetime.fromtimestamp(min(timestamps), datetime.UTC)
+        end = datetime.datetime.fromtimestamp(max(timestamps), datetime.UTC) + datetime.timedelta(hours=1)
+        stats = await get_instance(hass).async_add_executor_job(
+            statistics_during_period, hass, start, end, set(configured_entities.values()), 'hour', None, {'mean'}
+        )
+        values_by_entity = {
+            entity_id: {int(row['start']): row['mean'] for row in rows if row['mean'] is not None}
+            for entity_id, rows in stats.items()
+        }
+
+        missing_history = [
+            name for name, entity_id in configured_entities.items()
+            if not values_by_entity.get(entity_id)
+        ]
+        if missing_history:
+            _LOGGER.warning(
+                "get_hourly_price_values: sin estadísticas históricas para %s. "
+                "Se usará el valor actual en vivo como aproximación para esas horas "
+                "(salvo para %s, que se tratará como 0€ si falta). "
+                "Si alguna de estas entidades cambia de valor con el tiempo, "
+                "considera añadirle `state_class: measurement` para que el Recorder "
+                "guarde su historial y el cálculo sea exacto.",
+                missing_history, sorted(UfdEnergyCoordinator.HOURLY_VARYING_ENTITIES),
+            )
+
+        return values_by_entity
+
+    def compute_hour_cost(hass, configured_entities, values_by_entity, timestamp, grid_kwh, export_kwh):
+        """Coste de una hora concreta a partir de los valores horarios de tarifa."""
+        def get_value(name):
+            entity_id = configured_entities.get(name)
+            if not entity_id:
+                return None
+            historical = values_by_entity.get(entity_id, {}).get(timestamp)
+            if historical is not None:
+                return historical
+            if name in UfdEnergyCoordinator.HOURLY_VARYING_ENTITIES:
+                return None
+            return UfdEnergyCoordinator.get_entity_value(hass, entity_id)
+
+        # consumo de energía de la red (kWh) * precio de mercado (€/kWh)
+        market_price = get_value('market_price')
+        energia = grid_kwh * market_price if market_price is not None else 0.0
+
+        # valoración de la energía exportada (kWh) * compensación por excedentes (€/kWh)
+        export_compensation = get_value('export_compensation')
+        excedente = export_kwh * export_compensation if export_compensation is not None else 0.0
+
+        # coste fijo diario (€/día) = potencia contratada + bono social
+        fixed_daily = 0.0
+        power_price = get_value('power_price')
+        if power_price is not None:
+            fixed_daily += power_price
+        social_bonus = get_value('social_bonus')
+        if social_bonus is not None:
+            fixed_daily += social_bonus
+        fixed_hourly = fixed_daily / 24
+
+        # coste de la electricidad (€/hora) = consumo - excedente + coste fijo horario
+        electricity_subtotal = energia - excedente + fixed_hourly
+
+        # impuesto de electricidad (%) aplicado al subtotal de electricidad
+        electricity_tax = get_value('electricity_tax')
+        impuesto_electricidad = electricity_subtotal * (electricity_tax / 100) if electricity_tax is not None else 0.0
+
+        # otros conceptos diarios (€/día) = alquiler del contador
+        otros_conceptos_diarios = 0.0
+        meter_rent = get_value('meter_rent')
+        if meter_rent is not None:
+            otros_conceptos_diarios += meter_rent
+        otros_conceptos_horarios = otros_conceptos_diarios / 24
+
+        # subtotal de todos los conceptos antes del IVA (€/hora) = subtotal electricidad + impuesto electricidad + otros conceptos horarios
+        subtotal = electricity_subtotal + impuesto_electricidad + otros_conceptos_horarios
+
+        # IVA (%) aplicado al subtotal de todos los conceptos antes del IVA
+        iva = get_value('iva')
+        iva_amount = subtotal * (iva / 100) if iva is not None else 0.0
+
+        # coste total de la hora (€/hora) = subtotal + IVA
+        return subtotal + iva_amount
+
     async def import_market_cost_data(hass, consumptions):
         _LOGGER.debug(f"START - import_market_cost_data(len(consumptions)={len(consumptions)})")
 
@@ -232,24 +344,8 @@ class UfdEnergyCoordinator:
             _LOGGER.debug(f"END - import_market_cost_data: no hay horas nuevas que calcular")
             return
 
-        market_price = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.market_price_entity)
-        power_p1 = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.power_price_p1_entity)
-        power_p2 = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.power_price_p2_entity)
-        contracted_power = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.contracted_power_entity)
-        meter_rent = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.meter_rent_entity)
-        social_bonus = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.social_bonus_entity)
-        electricity_tax = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.electricity_tax_entity)
-        iva = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.iva_entity)
-        export_compensation = UfdEnergyCoordinator.get_entity_value(hass, UfdEnergyCoordinator.export_compensation_entity)
-
-        fixed_daily = 0.0
-        if power_p1 is not None and power_p2 is not None and contracted_power is not None:
-            fixed_daily += contracted_power * (power_p1 + power_p2)
-        if meter_rent is not None:
-            fixed_daily += meter_rent
-        if social_bonus is not None:
-            fixed_daily += social_bonus
-        fixed_hourly = fixed_daily / 24
+        configured_entities = UfdEnergyCoordinator.get_price_entities()
+        values_by_entity = await UfdEnergyCoordinator.get_hourly_price_values(hass, timestamps, configured_entities)
 
         market_cost_statistics = []
         day_cost = 0.0
@@ -257,14 +353,9 @@ class UfdEnergyCoordinator:
             grid_kwh = consumptions[timestamp]['value']
             export_kwh = selfconsumptions.get(timestamp, {}).get('export', 0.0)
 
-            energia = grid_kwh * market_price if market_price is not None else 0.0
-            excedente = export_kwh * export_compensation if export_compensation is not None else 0.0
-            base = energia + fixed_hourly - excedente
-
-            impuesto = base * (electricity_tax / 100) if electricity_tax is not None else 0.0
-            subtotal = base + impuesto
-            iva_amount = subtotal * (iva / 100) if iva is not None else 0.0
-            hour_cost = subtotal + iva_amount
+            hour_cost = UfdEnergyCoordinator.compute_hour_cost(
+                hass, configured_entities, values_by_entity, timestamp, grid_kwh, export_kwh
+            )
 
             total_cost += hour_cost
             day_cost += hour_cost
@@ -293,38 +384,10 @@ class UfdEnergyCoordinator:
             return
         selfconsumptions = await UfdEnergyCoordinator.load_selfconsumption_data(hass, SELFCONSUMPTION_FILE)
 
-        entities = {
-            'market_price': UfdEnergyCoordinator.market_price_entity,
-            'power_p1': UfdEnergyCoordinator.power_price_p1_entity,
-            'power_p2': UfdEnergyCoordinator.power_price_p2_entity,
-            'contracted_power': UfdEnergyCoordinator.contracted_power_entity,
-            'meter_rent': UfdEnergyCoordinator.meter_rent_entity,
-            'social_bonus': UfdEnergyCoordinator.social_bonus_entity,
-            'electricity_tax': UfdEnergyCoordinator.electricity_tax_entity,
-            'iva': UfdEnergyCoordinator.iva_entity,
-            'export_compensation': UfdEnergyCoordinator.export_compensation_entity,
-        }
-        configured_entities = {name: entity_id for name, entity_id in entities.items() if entity_id}
-
-        # Valor medio horario histórico (long-term statistics) de cada sensor/helper de tarifa.
-        # Los helpers necesitan state_class: measurement para tener estas estadísticas (ej. template sensors).
-        start = datetime.datetime.fromtimestamp(min(consumptions.keys()), datetime.UTC)
-        end = datetime.datetime.fromtimestamp(max(consumptions.keys()), datetime.UTC) + datetime.timedelta(hours=1)
-        stats = await get_instance(hass).async_add_executor_job(
-            statistics_during_period, hass, start, end, set(configured_entities.values()), 'hour', None, {'mean'}
-        )
-        values_by_entity = {
-            entity_id: {int(row['start']): row['mean'] for row in rows if row['mean'] is not None}
-            for entity_id, rows in stats.items()
-        }
-
-        def get_value(name, timestamp):
-            entity_id = configured_entities.get(name)
-            if not entity_id:
-                return None
-            return values_by_entity.get(entity_id, {}).get(timestamp)
-
+        configured_entities = UfdEnergyCoordinator.get_price_entities()
         timestamps = sorted(consumptions.keys())
+        values_by_entity = await UfdEnergyCoordinator.get_hourly_price_values(hass, timestamps, configured_entities)
+
         total_cost = 0.0
         day_cost = 0.0
         market_cost_statistics = []
@@ -332,35 +395,9 @@ class UfdEnergyCoordinator:
             grid_kwh = consumptions[timestamp]['value']
             export_kwh = selfconsumptions.get(timestamp, {}).get('export', 0.0)
 
-            market_price = get_value('market_price', timestamp)
-            energia = grid_kwh * market_price if market_price is not None else 0.0
-
-            power_p1 = get_value('power_p1', timestamp)
-            power_p2 = get_value('power_p2', timestamp)
-            contracted_power = get_value('contracted_power', timestamp)
-            fixed_daily = 0.0
-            if power_p1 is not None and power_p2 is not None and contracted_power is not None:
-                fixed_daily += contracted_power * (power_p1 + power_p2)
-            meter_rent = get_value('meter_rent', timestamp)
-            if meter_rent is not None:
-                fixed_daily += meter_rent
-            social_bonus = get_value('social_bonus', timestamp)
-            if social_bonus is not None:
-                fixed_daily += social_bonus
-            fixed_hourly = fixed_daily / 24
-
-            export_compensation = get_value('export_compensation', timestamp)
-            excedente = export_kwh * export_compensation if export_compensation is not None else 0.0
-
-            base = energia + fixed_hourly - excedente
-
-            electricity_tax = get_value('electricity_tax', timestamp)
-            impuesto = base * (electricity_tax / 100) if electricity_tax is not None else 0.0
-            subtotal = base + impuesto
-
-            iva = get_value('iva', timestamp)
-            iva_amount = subtotal * (iva / 100) if iva is not None else 0.0
-            hour_cost = subtotal + iva_amount
+            hour_cost = UfdEnergyCoordinator.compute_hour_cost(
+                hass, configured_entities, values_by_entity, timestamp, grid_kwh, export_kwh
+            )
 
             total_cost += hour_cost
             day_cost += hour_cost

@@ -22,9 +22,7 @@
         "description": "If you have them, point to the sensors/helpers with these tariff values. All fields are optional and can be left blank or set up later from 'Configure'.",
         "data": {
           "market_price_entity": "Energy price sensor (€/kWh, before taxes)",
-          "power_price_p1_entity": "Power price sensor P1 (€/kW day)",
-          "power_price_p2_entity": "Power price sensor P2 (€/kW day)",
-          "contracted_power_entity": "Contracted power sensor (kW)",
+          "power_price_entity": "Power price sensor (€/day)",
           "meter_rent_entity": "Meter rental sensor (€/day)",
           "social_bonus_entity": "Social bonus funding sensor (€/day)",
           "electricity_tax_entity": "Electricity tax sensor (%)",
@@ -42,9 +40,7 @@
         "data": {
           "has_self_consumption": "I have a solar self-consumption installation",
           "market_price_entity": "Energy price sensor (€/kWh, before taxes)",
-          "power_price_p1_entity": "Power price sensor P1 (€/kW day)",
-          "power_price_p2_entity": "Power price sensor P2 (€/kW day)",
-          "contracted_power_entity": "Contracted power sensor (kW)",
+          "power_price_entity": "Power price sensor (€/day)",
           "meter_rent_entity": "Meter rental sensor (€/day)",
           "social_bonus_entity": "Social bonus funding sensor (€/day)",
           "electricity_tax_entity": "Electricity tax sensor (%)",

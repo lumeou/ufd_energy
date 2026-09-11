@@ -22,8 +22,7 @@
         "description": "Se já tiver, indique os sensores/helpers com estes dados da sua tarifa. Todos os campos são opcionais e podem ficar em branco ou ser configurados depois em 'Configurar'.",
         "data": {
           "market_price_entity": "Sensor de preço da energia (€/kWh, sem impostos)",
-          "power_price_p1_entity": "Sensor de preço de potência P1 (€/kW dia)",
-          "power_price_p2_entity": "Sensor de preço de potência P2 (€/kW dia)",
+          "power_price_entity": "Sensor de preço de potência (€/dia)",
           "contracted_power_entity": "Sensor de potência contratada (kW)",
           "meter_rent_entity": "Sensor de aluguer do contador (€/dia)",
           "social_bonus_entity": "Sensor de financiamento do bônus social (€/dia)",
@@ -42,9 +41,7 @@
         "data": {
           "has_self_consumption": "Tenho uma instalação de autoconsumo solar",
           "market_price_entity": "Sensor de preço da energia (€/kWh, sem impostos)",
-          "power_price_p1_entity": "Sensor de preço de potência P1 (€/kW dia)",
-          "power_price_p2_entity": "Sensor de preço de potência P2 (€/kW dia)",
-          "contracted_power_entity": "Sensor de potência contratada (kW)",
+          "power_price_entity": "Sensor de preço de potência (€/dia)",
           "meter_rent_entity": "Sensor de aluguer do contador (€/dia)",
           "social_bonus_entity": "Sensor de financiamento do bônus social (€/dia)",
           "electricity_tax_entity": "Sensor do imposto de eletricidade (%)",

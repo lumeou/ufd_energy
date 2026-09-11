@@ -20,8 +20,10 @@ CUPS_SCHEMA = {
 }
 
 MARKET_TARIFF_FIELDS = [
-    'market_price_entity', 'power_price_p1_entity', 'power_price_p2_entity', 'contracted_power_entity',
-    'meter_rent_entity', 'social_bonus_entity', 'electricity_tax_entity', 'iva_entity', 'export_compensation_entity',
+    'market_price_entity', 'power_price_entity',
+    'meter_rent_entity', 'social_bonus_entity', 
+    'electricity_tax_entity', 'iva_entity', 
+    'export_compensation_entity'
 ]
 
 def market_tariff_schema(defaults=None):
