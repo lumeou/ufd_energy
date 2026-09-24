@@ -95,8 +95,11 @@ class UfdEnergyCoordinator:
         UFD.cups = config['cups']        
         _LOGGER.debug(f"END - set_config")
 
-    async def reprocess_energy_data(hass):
-        _LOGGER.debug(f"START - reprocess_statistics()")
+    async def reprocess_energy_data(hass, reprocess_market_cost=False):
+        _LOGGER.debug(f"START - reprocess_statistics(reprocess_market_cost={reprocess_market_cost})")
+        if reprocess_market_cost:
+            await UfdEnergyCoordinator.reprocess_market_cost(hass)
+
         consumptions, prices = await UfdEnergyCoordinator.load_energy_data(hass, ENERGY_FILE)
 
         _LOGGER.info(f"len(total_consumptions)={len(consumptions)}")

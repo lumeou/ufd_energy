@@ -49,5 +49,23 @@
         }
       }
     }
+  },
+  "services": {
+    "import_energy_data": {
+      "name": "Get new energy data"
+    },
+    "force_import_energy_data": {
+      "name": "Force get energy data"
+    },
+    "reprocess_energy_data": {
+      "name": "Reprocess energy data",
+      "description": "Regenerate energy panel statistics and bills. Including market reprocessing will also reconstruct market cost history with real values.",
+      "fields": {
+        "reprocess_market_cost": {
+          "name": "Reprocess market cost",
+          "description": "If True, also reprocess the free market tariff cost."
+        }
+      }
+    }
   }
 }

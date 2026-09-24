@@ -6,11 +6,11 @@ force_import_energy_data:
   description: Obtiene los datos de consumo y coste de los últimos 2 años y los sobreescribe (los datos existentes de más de 2 años se mantienen). Regenera todas las estadísticas y facturas.
 reprocess_energy_data:
   name: Reprocesar datos de energía
-  description: Regenera las estadísticas del panel de energía y las facturas.
-reprocess_market_cost:
-  name: Reprocesar coste de tarifa de mercado libre
   description: >-
-    Regenera desde cero la estadística "UFD: Coste (mercado libre)" usando el valor histórico (mean) de
-    cada sensor/helper configurado en cada hora. Las horas sin dato histórico disponible en ese sensor se
-    calculan sin ese término (no se usa el valor actual). Requiere que los sensores/helpers de tarifa tengan
-    "state_class: measurement" para conservar histórico.
+    Regenera las estadísticas del panel de energía y las facturas. Si se incluye el reprocesamiento
+    de mercado libre, también se reconstruirá el histórico de costes de mercado con valores reales.
+  fields:
+    reprocess_market_cost:
+      description: "Si es True, también se reprocesará el coste de la tarifa de mercado libre."
+      selector:
+        boolean: {}

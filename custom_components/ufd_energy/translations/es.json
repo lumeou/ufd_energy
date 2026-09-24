@@ -49,5 +49,23 @@
         }
       }
     }
+  },
+  "services": {
+    "import_energy_data": {
+      "name": "Obtener nuevos datos de energía"
+    },
+    "force_import_energy_data": {
+      "name": "Forzar obtención de datos de energía"
+    },
+    "reprocess_energy_data": {
+      "name": "Reprocesar datos de energía",
+      "description": "Regenera las estadísticas del panel de energía y las facturas. Si se incluye el reprocesamiento de mercado libre, también se reconstruirá el histórico de costes de mercado con valores reales.",
+      "fields": {
+        "reprocess_market_cost": {
+          "name": "Reprocesar coste de mercado",
+          "description": "Si es True, también se reprocesará el coste de la tarifa de mercado libre."
+        }
+      }
+    }
   }
 }

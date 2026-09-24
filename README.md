@@ -1,4 +1,4 @@
-# pvpc_energy
+# ufd_energy
 ![UFD logo](https://github.com/lumeou/ufd_energy/raw/main/assets/logo-ufd.png) ![ESIOS logo](https://github.com/lumeou/ufd_energy/raw/main/assets/logo-esios.png) ![CNMC logo](https://github.com/lumeou/ufd_energy/raw/main/assets/logo-cnmc.png)  
   
 Importa en el panel de energía los consumos y costes de ufd.es y ree.es. Calcula la factura en curso y las anterioes de cnmc.gob.es  
@@ -29,8 +29,8 @@ Con esto se genera la estadística **"UFD: Coste (mercado libre)"**, calculada h
 
 Puntos importantes sobre cómo funciona:
 - El cálculo diario normal es **incremental y no retroactivo**: cada hora se calcula una única vez, con el valor que tuvieran tus sensores/helpers en ese momento, y no se recalcula después aunque cambies esos valores más adelante. No se rellena el histórico pasado (no había tarifa de mercado libre configurada antes de activarlo).
-- El servicio `reprocess_market_cost` sí reconstruye todo el histórico de consumo desde cero, pero usando el **valor histórico real** de cada sensor/helper en cada hora (a través de las estadísticas de larga duración de Home Assistant), nunca el valor actual aplicado al pasado. Las horas sin dato histórico disponible en un sensor concreto se calculan sin ese término.
-- Para que un sensor o helper conserve histórico horario reconstruible por `reprocess_market_cost`, necesita tener `state_class: measurement` (y una `unit_of_measurement`). Un `input_number` normal no lo tiene por sí solo: hay que envolverlo en un sensor de plantilla (helper "Plantilla" en Ajustes → Ayudantes) con esos atributos.
+- Para reconstruir el histórico de coste de mercado libre con los valores históricos reales de cada sensor/helper (usando las estadísticas de larga duración de Home Assistant), utiliza el servicio `reprocess_energy_data` indicando que incluya el reprocesamiento de mercado.
+- Para que un sensor o helper conserve histórico horario reconstruible, necesita tener `state_class: measurement` (y una `unit_of_measurement`). Un `input_number` normal no lo tiene por sí solo: hay que envolverlo en un sensor de plantilla (helper "Plantilla" en Ajustes $\rightarrow$ Ayudantes) con esos atributos.
 
 Si tienes una instalación solar de autoconsumo, marca la opción "Tengo instalación de autoconsumo solar" al configurar el CUPS. Esto descargará además el excedente horario vertido a la red, guardado en `selfconsumption_data.csv`.
 
@@ -66,5 +66,4 @@ Añade a Lovelace un Markdown card para mostrar los datos de las últimas factur
 ## Servicios
 * import_energy_data - _Obtener nuevos datos de energía_: Obtiene nuevos datos de energía desde el último día hasta dos menos del actual. Se ejecuta automáticamnete todos los días a las 7:05.
 * force_import_energy_data - _Forzar obtención de datos de energía_: Obtiene los datos de consumo y coste de los últimos 2 años y los sobreescribe (los datos existentes de más de 2 años se mantienen). Regenera todas las estadísticas y facturas.
-* reprocess_energy_data - _Reprocesar datos de energía_: Regenera las estadísticas del panel de energía y las facturas.
-* reprocess_market_cost - _Reprocesar coste de tarifa de mercado libre_: Regenera desde cero "UFD: Coste (mercado libre)" usando el valor histórico real de cada sensor/helper de tarifa configurado, hora a hora.
+* reprocess_energy_data - _Reprocesar datos de energía_: Regenera las estadísticas del panel de energía y las facturas. Puede incluir opcionalmente el reprocesamiento del coste de mercado libre para asegurar la integridad de las facturas.
