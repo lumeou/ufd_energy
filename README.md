@@ -28,7 +28,7 @@ Si tienes una tarifa de mercado libre por periodos (P1/P2/P3), en el último pas
 Con esto se genera la estadística **"UFD: Coste (mercado libre)"**, calculada hora a hora con tu consumo real. Es una estimación aproximada de seguimiento, no una reconstrucción exacta de la factura.
 
 Puntos importantes sobre cómo funciona:
-- El cálculo diario normal es **incremental y no retroactivo**: cada hora se calcula una única vez, con el valor que tuvieran tus sensores/helpers en ese momento, y no se recalcula después aunque cambies esos valores más adelante. No se rellena el histórico pasado (no había tarifa de mercado libre configurada antes de activarlo).
+- El cálculo diario normal es **incremental y no retroactivo**: cada hora se calcula una única vez, con el valor que tuvieran tus sensores/helpers en ese momento, y no se recalcula después aunque cambies esos valores más adelante. Si la estadística todavía no existe, se construye una vez con el histórico disponible del sensor de precio de mercado (desde la primera hora en la que tenga estadísticas).
 - Para reconstruir el histórico de coste de mercado libre con los valores históricos reales de cada sensor/helper (usando las estadísticas de larga duración de Home Assistant), utiliza el servicio `reprocess_energy_data` indicando que incluya el reprocesamiento de mercado.
 - Para que un sensor o helper conserve histórico horario reconstruible, necesita tener `state_class: measurement` (y una `unit_of_measurement`). Un `input_number` normal no lo tiene por sí solo: hay que envolverlo en un sensor de plantilla (helper "Plantilla" en Ajustes $\rightarrow$ Ayudantes) con esos atributos.
 

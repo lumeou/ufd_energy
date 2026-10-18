@@ -34,14 +34,12 @@ def setup_hass_services(hass) -> None:
     async def async_handle_force_import_energy_data(call):
         hass.async_create_task(UfdEnergyCoordinator.import_energy_data(hass, True))
     async def async_handle_reprocess_energy_data(call):
-        hass.async_create_task(UfdEnergyCoordinator.reprocess_energy_data(hass))
-    async def async_handle_reprocess_market_cost(call):
-        hass.async_create_task(UfdEnergyCoordinator.reprocess_market_cost(hass))
+        reprocess_market_cost = call.data.get("reprocess_market_cost", False)
+        hass.async_create_task(UfdEnergyCoordinator.reprocess_energy_data(hass, reprocess_market_cost))
 
     hass.services.register(DOMAIN, "import_energy_data", async_handle_import_energy_data)
     hass.services.register(DOMAIN, "force_import_energy_data", async_handle_force_import_energy_data)
     hass.services.register(DOMAIN, "reprocess_energy_data", async_handle_reprocess_energy_data)
-    hass.services.register(DOMAIN, "reprocess_market_cost", async_handle_reprocess_market_cost)
     
     async_track_time_change(hass, async_handle_random_import_energy_data, hour=6, minute=30, second=0)
 
