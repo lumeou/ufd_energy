@@ -240,8 +240,8 @@ class UfdEnergyCoordinator:
 
         Solo tiene sentido para entidades con `state_class` y estadísticas
         generadas por el Recorder. Las que no las tengan devolverán un diccionario
-        vacío aquí, y `compute_hour_cost` decidirá si recurre al valor en vivo
-        como aproximación (ver HOURLY_VARYING_ENTITIES).
+        vacío aquí. `compute_hour_cost` exige el precio histórico de mercado y
+        solo recurre al valor actual para los demás ajustes de tarifa.
         """
         if not configured_entities or not timestamps:
             return {}
@@ -263,15 +263,25 @@ class UfdEnergyCoordinator:
         if missing_history:
             _LOGGER.warning(
                 "get_hourly_price_values: sin estadísticas históricas para %s. "
-                "Se usará el valor actual en vivo como aproximación para esas horas "
-                "(salvo para %s, que se tratará como 0€ si falta). "
+                "Los ajustes fijos usarán su valor actual; las horas sin precio "
+                "histórico de mercado no se calcularán. "
                 "Si alguna de estas entidades cambia de valor con el tiempo, "
                 "considera añadirle `state_class: measurement` para que el Recorder "
                 "guarde su historial y el cálculo sea exacto.",
-                missing_history, sorted(UfdEnergyCoordinator.HOURLY_VARYING_ENTITIES),
+                missing_history,
             )
 
         return values_by_entity
+
+    def get_market_cost_consumption(timestamp, consumptions, selfconsumptions):
+        """Devuelve los kWh importados de red usados por el coste de mercado libre."""
+        consumption = consumptions[timestamp]['value']
+        if UfdEnergyCoordinator.has_self_consumption:
+            selfconsumption = selfconsumptions.get(timestamp)
+            if selfconsumption is not None and selfconsumption.get('grid') is not None:
+                return selfconsumption['grid'], False
+            return consumption, True
+        return consumption, False
 
     def compute_hour_cost(hass, configured_entities, values_by_entity, timestamp, grid_kwh, export_kwh):
         """Coste de una hora concreta a partir de los valores horarios de tarifa."""
@@ -288,7 +298,9 @@ class UfdEnergyCoordinator:
 
         # consumo de energía de la red (kWh) * precio de mercado (€/kWh)
         market_price = get_value('market_price')
-        energia = grid_kwh * market_price if market_price is not None else 0.0
+        if market_price is None:
+            return None
+        energia = grid_kwh * market_price
 
         # valoración de la energía exportada (kWh) * compensación por excedentes (€/kWh)
         export_compensation = get_value('export_compensation')
@@ -358,13 +370,21 @@ class UfdEnergyCoordinator:
 
         market_cost_statistics = []
         day_cost = 0.0
+        missing_price_timestamp = None
+        grid_fallback_hours = 0
         for timestamp in timestamps:
-            grid_kwh = consumptions[timestamp]['value']
+            grid_kwh, used_grid_fallback = UfdEnergyCoordinator.get_market_cost_consumption(
+                timestamp, consumptions, selfconsumptions
+            )
+            grid_fallback_hours += used_grid_fallback
             export_kwh = selfconsumptions.get(timestamp, {}).get('export', 0.0)
 
             hour_cost = UfdEnergyCoordinator.compute_hour_cost(
                 hass, configured_entities, values_by_entity, timestamp, grid_kwh, export_kwh
             )
+            if hour_cost is None:
+                missing_price_timestamp = timestamp
+                break
 
             total_cost += hour_cost
             day_cost += hour_cost
@@ -374,6 +394,20 @@ class UfdEnergyCoordinator:
             start = datetime.datetime.fromtimestamp(timestamp, datetime.UTC)
             market_cost_statistics.append(
                 StatisticData(start=start, state=day_cost, sum=total_cost)
+            )
+
+        if missing_price_timestamp is not None:
+            _LOGGER.error(
+                "import_market_cost_data: falta el precio histórico de mercado para %s; "
+                "se detiene el cálculo antes de esa hora. Añade/recupera las estadísticas "
+                "del sensor y ejecuta reprocess_energy_data.",
+                datetime.datetime.fromtimestamp(missing_price_timestamp, datetime.UTC).isoformat(),
+            )
+        if grid_fallback_hours:
+            _LOGGER.warning(
+                "import_market_cost_data: se usó el consumo de energy_data.csv como alternativa "
+                "en %s horas sin dato EHCR/grid.",
+                grid_fallback_hours,
             )
 
         _LOGGER.info(f"len(market_cost_statistics)={len(market_cost_statistics)}")
@@ -423,12 +457,30 @@ class UfdEnergyCoordinator:
             UfdEnergyCoordinator.market_price_entity, datetime.datetime.fromtimestamp(first_price_timestamp).isoformat()
         )
         timestamps = [t for t in timestamps if t >= first_price_timestamp]
+        missing_price_timestamps = [
+            timestamp for timestamp in timestamps
+            if market_price_history.get(timestamp) is None
+        ]
+        if missing_price_timestamps:
+            first_missing = datetime.datetime.fromtimestamp(missing_price_timestamps[0], datetime.UTC)
+            _LOGGER.warning(
+                "reprocess_market_cost: faltan precios históricos de mercado en %s horas "
+                "(primera hora: %s); se reconstruirá únicamente el tramo anterior. "
+                "El cálculo incremental se detendrá en ese hueco hasta que recuperes "
+                "el histórico y vuelvas a ejecutar reprocess_energy_data.",
+                len(missing_price_timestamps), first_missing.isoformat(),
+            )
+            timestamps = [timestamp for timestamp in timestamps if timestamp < missing_price_timestamps[0]]
 
         total_cost = 0.0
         day_cost = 0.0
         market_cost_statistics = []
+        grid_fallback_hours = 0
         for timestamp in timestamps:
-            grid_kwh = consumptions[timestamp]['value']
+            grid_kwh, used_grid_fallback = UfdEnergyCoordinator.get_market_cost_consumption(
+                timestamp, consumptions, selfconsumptions
+            )
+            grid_fallback_hours += used_grid_fallback
             export_kwh = selfconsumptions.get(timestamp, {}).get('export', 0.0)
 
             hour_cost = UfdEnergyCoordinator.compute_hour_cost(
@@ -443,6 +495,13 @@ class UfdEnergyCoordinator:
             start_dt = datetime.datetime.fromtimestamp(timestamp, datetime.UTC)
             market_cost_statistics.append(
                 StatisticData(start=start_dt, state=day_cost, sum=total_cost)
+            )
+
+        if grid_fallback_hours:
+            _LOGGER.warning(
+                "reprocess_market_cost: se usó el consumo de energy_data.csv como alternativa "
+                "en %s horas sin dato EHCR/grid.",
+                grid_fallback_hours,
             )
 
         _LOGGER.info(f"len(market_cost_statistics)={len(market_cost_statistics)}")
@@ -502,7 +561,7 @@ class UfdEnergyCoordinator:
                 for line in file:
                     date, timestamp, grid, self_consumed, export = line[0:-1].split(',')
                     selfconsumptions[int(timestamp)] = {
-                        'grid': float(grid) if grid != '' else 0.0,
+                        'grid': float(grid) if grid != '' else None,
                         'self_consumed': float(self_consumed) if self_consumed != '' else 0.0,
                         'export': float(export) if export != '' else 0.0,
                     }
@@ -518,7 +577,8 @@ class UfdEnergyCoordinator:
             for timestamp in timestamps:
                 date = datetime.datetime.fromtimestamp(timestamp).strftime('%d/%m/%Y %H')
                 value = selfconsumptions[timestamp]
-                file.write(f"{date},{timestamp},{value['grid']},{value['self_consumed']},{value['export']}\n")
+                grid = '' if value['grid'] is None else value['grid']
+                file.write(f"{date},{timestamp},{grid},{value['self_consumed']},{value['export']}\n")
         _LOGGER.debug(f"END - save_selfconsumption_data")
 
     def create_export_statistics(last_statistic_timestamp, selfconsumptions, total_export):
@@ -606,7 +666,7 @@ class UfdEnergyCoordinator:
 
     async def get_market_cost_for_period(hass, start_date, end_date):
         if not UfdEnergyCoordinator.market_price_entity:
-            return None, None
+            return None, None, None, False
         start = datetime.datetime.combine(start_date, datetime.time.min, tzinfo=datetime.UTC)
         end = datetime.datetime.combine(end_date + datetime.timedelta(days=1), datetime.time.min, tzinfo=datetime.UTC)
         stats = await get_instance(hass).async_add_executor_job(
@@ -614,14 +674,21 @@ class UfdEnergyCoordinator:
         )
         rows = stats.get(MARKET_COST_STATISTIC_ID)
         if not rows:
-            return None, None
+            return None, None, None, False
         # sum() es acumulado desde siempre; el coste de este rango es la diferencia entre el
         # acumulado al final y el acumulado justo antes de la primera hora devuelta.
         cost = rows[-1]['sum'] - (rows[0]['sum'] - rows[0]['state'])
-        # market_cost no rellena histórico: covered_from es desde cuándo hay datos reales en
-        # este rango (puede ser posterior a start_date si la tarifa se activó a mitad del periodo).
-        covered_from = max(start_date, datetime.datetime.fromtimestamp(rows[0]['start'], datetime.UTC).date())
-        return cost, covered_from
+        # La serie se detiene ante un hueco de precio; comparar timestamps permite
+        # marcar también huecos que ocurren dentro del primer o último día del periodo.
+        covered_from = datetime.datetime.fromtimestamp(rows[0]['start'], datetime.UTC)
+        covered_through = datetime.datetime.fromtimestamp(rows[-1]['start'], datetime.UTC)
+        expected_start = start.timestamp()
+        expected_last_hour = end.timestamp() - 3600
+        is_complete = (
+            rows[0]['start'] <= expected_start
+            and rows[-1]['start'] >= expected_last_hour
+        )
+        return cost, covered_from, covered_through, is_complete
 
     async def calculate_bills(hass, billing_periods, consumptions, prices, force_update=False):
         _LOGGER.debug(f"START - calculate_bills(len(billing_periods)={len(billing_periods)}, len(consumptions)={len(consumptions)}, len(prices)={len(prices)}, force_update={force_update})")
@@ -646,6 +713,11 @@ class UfdEnergyCoordinator:
 
             current_bill_value = ''
             bills_description = ''
+            market_cost_selfconsumptions = {}
+            if UfdEnergyCoordinator.market_price_entity and UfdEnergyCoordinator.has_self_consumption:
+                market_cost_selfconsumptions = await UfdEnergyCoordinator.load_selfconsumption_data(
+                    hass, SELFCONSUMPTION_FILE
+                )
             if current_billing_period and 'total_cost' in current_billing_period and current_billing_period['total_cost'] != '-':
                 billing_periods.append(current_billing_period)
                 current_bill_value = '%.2f' % current_billing_period['total_cost']
@@ -657,14 +729,24 @@ class UfdEnergyCoordinator:
                     cost = round(current_billing_period['total_cost'] / days * estimation_days, 2)
                     bills_description += f"Estimación PVPC {current_billing_period['start_date'].strftime('%d/%m')} - {estimation_end_date.strftime('%d/%m')} ({estimation_days} días): **{cost} €**\n\n"
 
-                    market_cost, market_cost_covered_from = await UfdEnergyCoordinator.get_market_cost_for_period(
+                    (
+                        market_cost,
+                        market_cost_covered_from,
+                        market_cost_covered_through,
+                        market_cost_complete,
+                    ) = await UfdEnergyCoordinator.get_market_cost_for_period(
                         hass, current_billing_period['start_date'], current_billing_period['end_date']
                     )
                     if market_cost is not None:
-                        covered_days = (current_billing_period['end_date'] - market_cost_covered_from).days + 1
+                        covered_days = (
+                            market_cost_covered_through.date() - market_cost_covered_from.date()
+                        ).days + 1
                         market_estimate = round(market_cost / covered_days * estimation_days, 2)
-                        note = '' if market_cost_covered_from <= current_billing_period['start_date'] \
-                            else f" _(datos desde {market_cost_covered_from.strftime('%d/%m')}, no cubre todo el periodo)_"
+                        note = (
+                            f" _(datos del {market_cost_covered_from.strftime('%d/%m')} "
+                            f"al {market_cost_covered_through.strftime('%d/%m')}; periodo parcial)_"
+                            if not market_cost_complete else ''
+                        )
                         bills_description += f"Estimación mercado libre {current_billing_period['start_date'].strftime('%d/%m')} - {estimation_end_date.strftime('%d/%m')} ({estimation_days} días): **{market_estimate} €**{note}\n\n"
                         
             # Cabecera de la tabla
@@ -700,20 +782,29 @@ class UfdEnergyCoordinator:
                     market_cost = ''
                     market_cost_kwh = ''
                     day_market_cost = ''
-                    period_market_cost, market_cost_covered_from = await UfdEnergyCoordinator.get_market_cost_for_period(
+                    (
+                        period_market_cost,
+                        market_cost_covered_from,
+                        market_cost_covered_through,
+                        market_cost_complete,
+                    ) = await UfdEnergyCoordinator.get_market_cost_for_period(
                         hass, billing_period['start_date'], billing_period['end_date']
                     )
                     if period_market_cost is not None:
-                        market_consumption = billing_period['total_consumption']
-                        market_days = days
+                        covered_start = int(market_cost_covered_from.timestamp())
+                        covered_end = int(market_cost_covered_through.timestamp())
+                        market_consumption = sum(
+                            UfdEnergyCoordinator.get_market_cost_consumption(
+                                timestamp, consumptions, market_cost_selfconsumptions
+                            )[0]
+                            for timestamp in consumptions
+                            if covered_start <= timestamp <= covered_end
+                        )
+                        market_days = (
+                            market_cost_covered_through.date() - market_cost_covered_from.date()
+                        ).days + 1
                         partial_mark = ''
-                        if market_cost_covered_from > billing_period['start_date']:
-                            # Datos parciales: cent/kWh y €/día se calculan solo sobre los días
-                            # cubiertos, y se marcan con * para no confundirlos con el periodo completo.
-                            covered_start = int(time.mktime(market_cost_covered_from.timetuple()))
-                            covered_end = int(time.mktime((billing_period['end_date'] + datetime.timedelta(days=1)).timetuple()))
-                            market_consumption = sum(c['value'] for t, c in consumptions.items() if covered_start <= t < covered_end)
-                            market_days = (billing_period['end_date'] - market_cost_covered_from).days + 1
+                        if not market_cost_complete:
                             partial_mark = '*'
                             has_partial_market_cost = True
                         market_cost = f"{round(period_market_cost, 2)}{partial_mark}"
@@ -731,7 +822,7 @@ class UfdEnergyCoordinator:
                         bills_description += f" {market_cost} | {market_cost_kwh} | {day_market_cost} |"
 
             if has_partial_market_cost:
-                bills_description += "\n\n_* Mercado libre: periodo cubierto solo en parte; importe, cent/kWh y €/día corresponden únicamente a los días con datos._"
+                bills_description += "\n\n_* Mercado libre: periodo cubierto solo en parte; importe, cent/kWh y €/día no representan el total del periodo._"
 
             _LOGGER.debug(f"current_bill_value={current_bill_value}, bills_description={bills_description}")
             hass.states.async_set(CURRENT_BILL_STATE, current_bill_value, {'detail': bills_description})
