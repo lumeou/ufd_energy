@@ -21,6 +21,8 @@ En el caso de tener datos de instalaciones previas (o si vienes de la antigua `p
 
 Si tienes una instalación solar de autoconsumo, marca la opción "Tengo instalación de autoconsumo solar" al configurar el CUPS. Esto descargará además el excedente horario vertido a la red, guardado en `selfconsumption_data.csv`.
 
+Para las simulaciones de factura de CNMC, cuando el autoconsumo está activado se envía la energía importada de red (`grid`/EHCR), no el consumo bruto de `energy_data.csv`. Si faltan lecturas horarias de EHCR para el periodo, se omite la nueva simulación y se registra el problema en el log; no se mezcla con la serie bruta.
+
 ### Coste con tarifa de mercado libre (opcional)
 
 Si tienes una tarifa de mercado libre por periodos (P1/P2/P3), en el último paso de la configuración (o después, desde "Configurar" en la integración) puedes indicar, uno a uno, el `entity_id` de un sensor o helper que contenga cada valor de tu tarifa: precio de la energía (€/kWh sin impuestos), precio de potencia P1/P2 (€/kW·día), potencia contratada (kW), alquiler del contador (€/día), financiación del bono social (€/día), impuesto eléctrico (%), IVA (%) y compensación de excedentes (€/kWh). Todos los campos son opcionales: el que dejes en blanco simplemente no se incluye en el cálculo.

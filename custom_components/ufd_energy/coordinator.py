@@ -837,7 +837,37 @@ class UfdEnergyCoordinator:
             if start_timestamp <= timestamp <= end_timestamp:
                 bill_consumptions[timestamp] = consumption['value']
         if bill_consumptions:
-            billing_period, consumptions_file = await CNMC.calculate_bill(billing_period, UfdEnergyCoordinator.cups, bill_consumptions, UfdEnergyCoordinator.zip_code)
+            cnmc_consumptions = bill_consumptions
+            if UfdEnergyCoordinator.has_self_consumption:
+                selfconsumptions = await UfdEnergyCoordinator.load_selfconsumption_data(
+                    hass, SELFCONSUMPTION_FILE
+                )
+                missing_grid_timestamps = [
+                    timestamp for timestamp in bill_consumptions
+                    if timestamp not in selfconsumptions
+                    or selfconsumptions[timestamp].get('grid') is None
+                ]
+                if missing_grid_timestamps:
+                    first_missing = datetime.datetime.fromtimestamp(
+                        missing_grid_timestamps[0], datetime.UTC
+                    )
+                    _LOGGER.error(
+                        "get_bill: no se calcula la simulación CNMC de %s a %s: faltan datos "
+                        "horarios EHCR/grid en %s intervalos (primero: %s). "
+                        "Se conserva el cálculo anterior si lo había.",
+                        billing_period['start_date'], billing_period['end_date'],
+                        len(missing_grid_timestamps), first_missing.isoformat(),
+                    )
+                    return billing_period
+                cnmc_consumptions = {
+                    timestamp: selfconsumptions[timestamp]['grid']
+                    for timestamp in bill_consumptions
+                }
+
+            billing_period, consumptions_file = await CNMC.calculate_bill(
+                billing_period, UfdEnergyCoordinator.cups, cnmc_consumptions,
+                UfdEnergyCoordinator.zip_code
+            )
             if consumptions_file is not None:
                 path = f"{USER_FILES_PATH}/consumption_files/{billing_period['start_date'].year}"
                 if not exists(path):

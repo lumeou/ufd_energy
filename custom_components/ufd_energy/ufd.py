@@ -414,7 +414,7 @@ class UFD:
                     hour = 2
                 timestamp = int(time.mktime(time.strptime(f"{date_str} {(hour - 1):02}", '%d/%m/%Y %H')))
                 result[timestamp] = {
-                    'grid': UFD._parseSelfConsumptionValue(item.get('EHCR')) or 0.0,
+                    'grid': UFD._parseSelfConsumptionValue(item.get('EHCR')),
                     'self_consumed': UFD._parseSelfConsumptionValue(item.get('EHAC')) or 0.0,
                     'export': UFD._parseSelfConsumptionValue(item.get('EHEX')) or 0.0,
                 }
